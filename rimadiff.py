@@ -91,15 +91,16 @@ class RimaDiffCli:
 
     def _get_tables(self, dl_user, skills, activities):
         user_obj = {}
-        for user in self.users:
-            obj = self._get_object(user, dl_user)
-            for skill_obj in obj['skills']:
-                if skill_obj['name'] not in skills:
-                    skills.append(skill_obj['name'])
-            for act_obj in obj['activities']:
-                if act_obj['name'] not in activities:
-                    activities.append(act_obj['name'])
-            user_obj[user] = obj
+        with requests.Session() as session:
+            for user in self.users:
+                obj = self._get_object(user, dl_user, session)
+                for skill_obj in obj['skills']:
+                    if skill_obj['name'] not in skills:
+                        skills.append(skill_obj['name'])
+                for act_obj in obj['activities']:
+                    if act_obj['name'] not in activities:
+                        activities.append(act_obj['name'])
+                user_obj[user] = obj
 
         table_skill_level = [['Skill'], *([skill] for skill in skills)]
         table_skill_xp = [['Skill'], *([skill] for skill in skills)]
@@ -135,14 +136,14 @@ class RimaDiffCli:
 
         return table_skill_level, table_skill_xp, table_activity
 
-    def _get_object(self, user, dl_user):
+    def _get_object(self, user, dl_user, session):
         utc_date = datetime.now(tz=UTC).date().isoformat()
         path = self.history_path / f'{user}/{utc_date}.json'
         path.parent.mkdir(exist_ok=True)
         obj = None
         if self._force_download or not path.exists():
             url = self.api_url.format(urllib.parse.quote(user, safe=''))
-            resp = requests.get(url)
+            resp = session.get(url)
             obj = resp.json()
             path.write_text(resp.text, encoding='utf-8')
             dl_user.append(user)
