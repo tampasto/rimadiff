@@ -16,10 +16,18 @@ DEFAULT_CONFIG = '''
 api_url = 'https://secure.runescape.com/m=hiscore_oldschool/index_lite.json?player={}'
 history_path = '~/.rimadiff_history'
 
+[user-setup.default]
 users = ['Faux', 'Manked', 'Mote Plox', 'Mr Mammal']
 user_alias = {'Manked' = 'PKer', 'Mote Plox' = 'Historian'}
 rima = 'Faux'
 '''
+
+
+class UserSetup:
+    def __init__(self, setup):
+        self.users = setup['users']
+        self.user_alias = setup['user_alias']
+        self.rima = setup['rima']
 
 
 class RimaDiffCli:
@@ -41,12 +49,13 @@ class RimaDiffCli:
         fg_def = self.TERMINAL_COLORS[fg] - 10
         return f'\033[{bold_def}{bg_def};{fg_def}m'
 
-    def __init__(self, api_url, history_path, users, user_alias, rima):
+    def __init__(self, api_url, history_path, user_setup, setup_name):
         self.api_url = api_url
         self.history_path = history_path
-        self.users = users
-        self.user_alias = user_alias
-        self.rima = rima
+
+        self.users = user_setup[setup_name].users
+        self.user_alias = user_setup[setup_name].user_alias
+        self.rima = user_setup[setup_name].rima
         self._force_download = False
         self._show_relative = False
 
@@ -228,18 +237,19 @@ class RimaDiffCli:
 
 
 def main():
-    args = _parse_arguments()
-
     config = _read_config()
+    setup_names = list(config['user-setup'])
+    args = _parse_arguments(setup_names)
+
     api_url = config['api_url']
     history_path_str = config['history_path']
-    users = config['users']
-    user_alias = config['user_alias']
-    rima = config['rima']
+    user_setup = {
+        name: UserSetup(setup) for name, setup in config['user-setup'].items()}
+    setup_name = args.user_setup or 'default'
 
     history_path = Path(history_path_str).expanduser().resolve()
 
-    cli = RimaDiffCli(api_url, history_path, users, user_alias, rima)
+    cli = RimaDiffCli(api_url, history_path, user_setup, setup_name)
 
     print_skills = args.skills or args.all_tables
     print_xp = args.xp or args.all_tables
@@ -265,13 +275,17 @@ def _read_config():
     return config
 
 
-def _parse_arguments():
+def _parse_arguments(setup_names):
     parser = argparse.ArgumentParser(
         prog='rimadiff',
         description=(
             'Compare OSRS game hiscores in terminal. If none of table '
             'choice flags are given, -s is assumed.'
             )
+        )
+    parser.add_argument(
+        '-u', '--user-setup', metavar='NAME', choices=setup_names,
+        help='name of user setup, using "default" if not given'
         )
     parser.add_argument(
         '-f', '--force-download', action='store_true',

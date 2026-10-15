@@ -16,9 +16,10 @@ stores all downloaded datasets by default in `~/.rimadiff_history`. It
 does not refetch the data for the same day unless forced to do so. See
 all command line options with `rimadiff.py -h`.
 
-The default operational part of the configuration looks like this:
+The default username setup of the configuration looks like this:
 
 ```toml
+[user-setup.default]
 users = ['Faux', 'Manked', 'Mote Plox', 'Mr Mammal']
 user_alias = {'Manked' = 'PKer', 'Mote Plox' = 'Historian'}
 rima = 'Faux'
@@ -29,3 +30,6 @@ aliases PKer and Historian respectively. This means that the alias is
 shown in the tables instead of their real usernames. User Mr Mammal will
 be displayed with their real username. The configuration file follows
 [TOML format](https://toml.io/en/).
+
+You may add multiple user setups by adding more `[user-setup.SETUP_NAME]`
+blocks.
