@@ -473,8 +473,8 @@ def _parse_arguments(setup_names):
     parser = argparse.ArgumentParser(
         prog='rimadiff',
         description=(
-            'Compare OSRS game hiscores in terminal. If none of table '
-            'choice flags are given, -s is assumed.'
+            'Compare OSRS game hiscores in terminal. If none of the '
+            'table choice flags are given, -s is assumed.'
             )
         )
     parser.add_argument(

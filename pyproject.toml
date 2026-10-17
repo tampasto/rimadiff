@@ -29,6 +29,9 @@ dependencies = [
     'requests>=2.34'
 ]
 
+[project.urls]
+Homepage = "https://github.com/tampasto/rimadiff"
+
 [project.scripts]
 rimadiff = "rimadiff:main"
 
