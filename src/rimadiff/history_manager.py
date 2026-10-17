@@ -1,8 +1,9 @@
 import sqlite3
+from pathlib import PurePath
 
 
 class HistoryManager:
-    SCHEMA_PATH = './history_schema.sql'
+    SCHEMA_PATH = PurePath(__file__).parent / 'history_schema.sql'
 
     def __init__(self, db_path):
         self.db_path = db_path
