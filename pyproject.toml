@@ -1,0 +1,37 @@
+[project]
+name = "rimadiff"
+version = "0.8.0"
+description = "Compare OSRS game hiscores in terminal."
+license = "MIT"
+license-files = ["LICENSE"]
+readme = "README.md"
+authors = [
+    { name = "tampasto" }
+]
+keywords = [
+    "osrs", "compare", "comparator", "skills", "activities", "rank",
+    "history", "historical", "snapshot"
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Other Audience",
+    "Natural Language :: English",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: SQL",
+    "Topic :: Games/Entertainment :: Multi-User Dungeons (MUD)",
+    "Topic :: Games/Entertainment :: Role-Playing"
+]
+requires-python = ">=3.11"
+dependencies = [
+    'requests>=2.34'
+]
+
+[project.scripts]
+rimadiff = "rimadiff:main"
+
+[build-system]
+requires = ["uv_build>=0.13.1,<0.14.0"]
+build-backend = "uv_build"
