@@ -8,20 +8,21 @@ CREATE TABLE Label (
 
 CREATE TABLE User (
   id INT PRIMARY KEY,
-  user TEXT NOT NULL UNIQUE,
-  official_name TEXT
+  name TEXT NOT NULL UNIQUE, -- Always lower case
+  name_original TEXT -- Case as in config file
 ) STRICT, WITHOUT ROWID;
 
-CREATE TABLE UserDataTime (
-  date_ordinal INT,
+CREATE TABLE UserDataRequest (
+  date_ordinal INT, -- Proleptic Gregorian ordinal, 0001-01-01 is 1, etc.
   user_id INT REFERENCES User (id) ON DELETE CASCADE,
   time TEXT NOT NULL, -- Local time as HH:MM
   timezone TEXT NOT NULL, -- As +HHMM
+  url TEXT NOT NULL,
   PRIMARY KEY (date_ordinal, user_id)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE UserData (
-  date_ordinal INT, -- Proleptic Gregorian ordinal, 0001-01-01 is 1, etc.
+  date_ordinal INT,
   user_id INT,
   label_category INT,
   label_id INT,
@@ -29,7 +30,7 @@ CREATE TABLE UserData (
   value INT NOT NULL,
   PRIMARY KEY (date_ordinal, user_id, label_category, label_id),
   FOREIGN KEY (date_ordinal, user_id)
-    REFERENCES UserDataTime (date_ordinal, user_id) ON DELETE CASCADE,
+    REFERENCES UserDataRequest (date_ordinal, user_id) ON DELETE CASCADE,
   FOREIGN KEY (label_category, label_id, label_version)
     REFERENCES Label (category, id, version) ON DELETE CASCADE
 ) STRICT, WITHOUT ROWID;

@@ -28,9 +28,11 @@ rima = 'Faux'
 
 class UserSetup:
     def __init__(self, setup):
-        self.users = setup['users']
-        self.user_alias = setup['user_alias']
-        self.rima = setup['rima']
+        self.users = [u.lower() for u in setup['users']]
+        self.user_orig = {u.lower(): u for u in setup['users']}
+        self.user_alias = {
+            u.lower(): a for u, a in setup['user_alias'].items()}
+        self.rima = setup['rima'].lower()
 
 
 class RimaDiffCli:
@@ -62,6 +64,7 @@ class RimaDiffCli:
         self.user_setup = user_setup
 
         self._users = None
+        self._user_orig = None
         self._user_alias = None
         self._rima = None
         self._force_download = False
@@ -71,6 +74,7 @@ class RimaDiffCli:
         self._download_fail_users = []
         self._download_fail_errors = Counter()
         self._bad_json_users = []
+        self._wrong_user_data = []
 
     def print_tables(
         self, setup_name, force_download, show_difference,
@@ -78,6 +82,7 @@ class RimaDiffCli:
         print_activities, print_activity_rank
     ):
         self._users = self.user_setup[setup_name].users
+        self._user_orig = self.user_setup[setup_name].user_orig
         self._user_alias = self.user_setup[setup_name].user_alias
         self._rima = self.user_setup[setup_name].rima
 
@@ -101,15 +106,20 @@ class RimaDiffCli:
         print()
 
         dl_success = self._download_success_users
+        user_map = self._user_orig.get
         if len(dl_success):
-            print('Downloaded: ' + ', '.join(dl_success) + '\n')
+            print(
+                'Downloaded: '
+                + ', '.join(map(user_map, dl_success)) + '\n'
+                )
 
         dl_fail = self._download_fail_users
         term_color = RimaDiffCli.terminal_color
         if len(dl_fail):
             print(
                 term_color('red')
-                + 'Could not download: ' + ', '.join(dl_fail)
+                + 'Could not download: '
+                + ', '.join(map(user_map, dl_fail))
                 + term_color() + '\n'
                 )
         dl_errors = self._download_fail_errors
@@ -122,9 +132,25 @@ class RimaDiffCli:
         if len(json_fail):
             print(
                 term_color('red')
-                + 'Bad API JSON: ' + ', '.join(json_fail)
+                + 'Bad API JSON: '
+                + ', '.join(map(user_map, json_fail))
                 + term_color() + '\n'
                 )
+        if len(self._wrong_user_data):
+            print(
+                term_color('red')
+                + 'API returned data for wrong users, snapshots not saved in '
+                  'history:'
+                + term_color()
+                )
+            for user, user_response in self._wrong_user_data:
+                print(
+                    '  ' + term_color('red')
+                    + f'Requested {user_map(user)}, '
+                      f'got {user_response}'
+                    + term_color()
+                    )
+            print()
 
         if len(user_history_time):
             print('Fetched at', end='')
@@ -140,7 +166,7 @@ class RimaDiffCli:
                 for user, (time, timezone) in sorted_items:
                     print(
                         time + (f' ({timezone})' if variable_tz else '')
-                        + f' {user}'
+                        + f' {user_map(user)}'
                         )
                 print()
 
@@ -187,24 +213,25 @@ class RimaDiffCli:
                     if time is not None:
                         user_history_time[user] = time, timezone
                 if data is None:
-                    data, category_labels, official_name = self._download_data(user, session)
-                    if data is not None:
+                    data, category_labels, url, skip_write = self._download_data(user, session)
+                    if data is not None and not skip_write:
                         self.history_manager.write_data(
                             today_ordinal, user_id, data, category_labels,
-                            now_time, now_timezone
+                            now_time, now_timezone, url
                             )
-                        self.history_manager.update_official_name(user_id, official_name)
+                        self.history_manager.update_user_original(user_id, user_original)
                 push_to_dict(data, user, user_id)
 
             for user in new_users:
-                data, category_labels, official_name = self._download_data(user, session)
+                data, category_labels, url, skip_write = self._download_data(user, session)
                 user_id = None
-                if data is not None:
+                if data is not None and not skip_write:
+                    user_original = self._user_orig[user]
                     user_id = self.history_manager.add_user(
-                        user, official_name)
+                        user, user_original)
                     self.history_manager.write_data(
                         today_ordinal, user_id, data, category_labels,
-                        now_time, now_timezone
+                        now_time, now_timezone, url
                         )
                 push_to_dict(data, user, user_id)
         return user_data, na_users, user_history_time
@@ -219,9 +246,8 @@ class RimaDiffCli:
         label_id_rows = [sorted(label_ids) for label_ids in label_id_row_sets]
 
         user_column_headers = []
-        user_official_name = self.history_manager.get_user_official_name_dict()
         for user in self._users:
-            col_header = user_official_name.get(user, user)
+            col_header = self._user_orig[user]
 
             # Nayta dorkalle RIMA
             if user == self._rima:
@@ -241,8 +267,9 @@ class RimaDiffCli:
             table = [header_row]
             for label_id in label_id_rows[category]:
                 for user in self._users:
+                    user_id = user_id_dict[user]
                     label = self.history_manager.get_label(
-                        category, label_id, today_ordinal, user)
+                        category, label_id, today_ordinal, user_id)
                     if label is not None:
                         break
                 row = [label]
@@ -267,8 +294,8 @@ class RimaDiffCli:
     def _download_data(self, user, session):
         data = None
         category_labels = None
-        official_name = None
-        quoted_user = urllib.parse.quote(user, safe='')
+        user_original = self._user_orig[user]
+        quoted_user = urllib.parse.quote(user_original, safe='')
         url = self.api_url.format(quoted_user)
         resp = None
         try:
@@ -280,16 +307,20 @@ class RimaDiffCli:
             self._download_fail_errors[err_str] += 1
             resp = None
 
+        skip_write = False
         if resp:
             self._download_success_users.append(user)
             obj = resp.json()
-            data, category_labels, official_name = self._response_json_to_data(obj)
+            data, category_labels, user_response = self._response_json_to_data(obj)
             if data is None:
                 self._bad_json_users.append(user)
-        return data, category_labels, official_name
+            elif user != user_response.lower():
+                self._wrong_user_data.append((user, user_response))
+                skip_write = True
+        return data, category_labels, url, skip_write
 
     def _response_json_to_data(self, obj):
-        official_name = obj['name']
+        user_response = obj['name']
 
         # data[category][label_id] = value
         # category_labels[category][label_id] = label
@@ -321,7 +352,7 @@ class RimaDiffCli:
 
         data = [*skills_categories, *activity_categories]
         category_labels = [*skills_category_labels, *activity_category_labels]
-        return data, category_labels, official_name
+        return data, category_labels, user_response
 
     def _add_combat_level(self, table_skill_level):
         combat_row = ['Combat']

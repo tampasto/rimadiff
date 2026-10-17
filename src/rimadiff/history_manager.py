@@ -27,7 +27,7 @@ class HistoryManager:
         self.db.close()
 
     def sort_users(self, users_set):
-        """Sort db users_set for UserData pk considerations."""
+        """Sort db users for UserData pk considerations."""
         user_id = self.get_user_id_dict()
         db_users = sorted([(user_id[u], u) for u in users_set if u in user_id])
         new_users = sorted([u for u in users_set if u not in user_id])
@@ -53,7 +53,7 @@ class HistoryManager:
             data.append(label_values)
         cur.arraysize = 1
         cur.execute(
-            'SELECT time, timezone FROM UserDataTime '
+            'SELECT time, timezone FROM UserDataRequest '
             'WHERE date_ordinal = ? AND user_id = ?',
             (date_ordinal, user_id)
             )
@@ -61,7 +61,8 @@ class HistoryManager:
         return data, time, timezone
 
     def write_data(
-        self, date_ordinal, user_id, data, category_labels, time, timezone
+        self, date_ordinal, user_id, data, category_labels,
+        time, timezone, url
     ):
         # data[category][label_id] = value
         # category_labels[category][label_id] = label
@@ -89,11 +90,11 @@ class HistoryManager:
                 data_rows.append(row)
         self._remove_extra_data(date_ordinal, user_id, data_rows)
         cur.execute(
-            'INSERT INTO UserDataTime (date_ordinal, user_id, time, timezone) '
-            'VALUES (?, ?, ?, ?)'
+            'INSERT INTO UserDataRequest (date_ordinal, user_id, time, timezone, url) '
+            'VALUES (?, ?, ?, ?, ?)'
             'ON CONFLICT (date_ordinal, user_id) '
             'DO UPDATE SET time = excluded.time, timezone = excluded.timezone',
-            (date_ordinal, user_id, time, timezone)
+            (date_ordinal, user_id, time, timezone, url)
             )
         cur.executemany(
             'INSERT INTO UserData ('
@@ -130,11 +131,11 @@ class HistoryManager:
                 )
             self.db.commit()
 
-    def update_official_name(self, user_id, official_name):
+    def update_user_original(self, user_id, user_original):
         cur = self.cursor
         cur.execute(
-            'UPDATE User SET official_name = ? WHERE id = ?',
-            (official_name, user_id)
+            'UPDATE User SET name_original = ? WHERE id = ?',
+            (user_original, user_id)
             )
         self.db.commit()
 
@@ -159,12 +160,12 @@ class HistoryManager:
         self.db.commit()
         return version
 
-    def add_user(self, user, official_name):
+    def add_user(self, user, user_original):
         cur = self.cursor
         user_id = self._column_increment('User', 'id')
         cur.execute(
-            'INSERT INTO User (id, user, official_name) VALUES (?, ?, ?)',
-            (user_id, user, official_name)
+            'INSERT INTO User (id, name, name_original) VALUES (?, ?, ?)',
+            (user_id, user, user_original)
             )
         self.db.commit()
         return user_id
@@ -183,33 +184,32 @@ class HistoryManager:
             value = max_value + 1
         return value
 
-    def get_user_official_name_dict(self):
+    def get_user_original_dict(self):
         cur = self.cursor
         cur.arraysize = 100
-        cur.execute('SELECT user, official_name FROM User')
-        user_official_name = dict(cur.fetchall())
-        return user_official_name
+        cur.execute('SELECT name, name_original FROM User')
+        user_original_dict = dict(cur.fetchall())
+        return user_original_dict
 
     def get_user_id_dict(self):
         cur = self.cursor
         cur.arraysize = 100
-        cur.execute('SELECT user, id FROM User')
-        user_id = dict(cur.fetchall())
-        return user_id
+        cur.execute('SELECT name, id FROM User')
+        user_id_dict = dict(cur.fetchall())
+        return user_id_dict
 
-    def get_label(self, category, label_id, date_ordinal, user):
+    def get_label(self, category, label_id, date_ordinal, user_id):
         cur = self.cursor
         cur.arraysize = 1
         cur.execute(
             'SELECT L.value '
-            'FROM User AS U '
-            'INNER JOIN UserData AS D ON U.user = ? AND U.id = D.user_id '
+            'FROM UserData AS D '
             'INNER JOIN Label AS L '
-                'ON D.date_ordinal = ? AND D.user_id = D.user_id '
-                'AND D.label_category = ? AND D.label_id = ?'
+                'ON D.date_ordinal = ? AND D.user_id = ? '
+                'AND D.label_category = ? AND D.label_id = ? '
                 'AND D.label_category = L.category AND D.label_id = L.id '
                 'AND D.label_version = L.version',
-            (user, date_ordinal, category, label_id)
+            (date_ordinal, user_id, category, label_id)
             )
         return self._fetch_row(cur)
 
@@ -228,7 +228,7 @@ class HistoryManager:
         cur = self.cursor
         cur.arraysize = 300
         cur.execute(
-            'SELECT DISTINCT date_ordinal, time, timezone FROM UserDataTime')
+            'SELECT DISTINCT date_ordinal, time, timezone FROM UserDataRequest')
         snapshots = cur.fetchall()
         return snapshots
 
