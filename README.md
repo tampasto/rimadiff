@@ -47,7 +47,7 @@ Both examples below will create a virtual environment to directory .venv
 and install the project dependencies plus the project as an editable
 install.
 
-### pip
+### pip install
 File `requirements.txt` is provided for convenience to easily install
 dependencies with pip. It is strongly advised to set up a virtual
 environment.
@@ -60,7 +60,7 @@ python3 -m pip upgrade pip
 python3 -m pip install -r requirements.txt
 ```
 
-### uv
+### uv install
 
 You may also set up the environment using uv.
 
@@ -80,7 +80,7 @@ uv sync
 # pip installation
 cd /path/to/rimadiff
 source .venv/bin/activate
-python3 -m src/rimadiff
+python3 -m rimadiff
 
 # uv installation
 cd /path/to/rimadiff
