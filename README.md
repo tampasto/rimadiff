@@ -15,9 +15,9 @@ differences against this user.
 
 The script creates a configuration file in `~/.config/rimadiff.toml` and
 stores all downloaded datasets by default in an
-[SQLite](https://sqlite.org/) database in `~/.rimadiff_history`. It does
-not refetch the data for the same day unless forced to do so. See all
-command line options with `rimadiff.py -h`.
+[SQLite](https://sqlite.org/) database in `~/.rimadiff_history.db`. It
+does not refetch the data for the same day unless forced to do so. See
+all command line options with `rimadiff.py -h`.
 
 The default username setup of the configuration file looks like this:
 
