@@ -1,0 +1,3 @@
+import rimadiff
+
+rimadiff.main()
