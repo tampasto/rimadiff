@@ -64,7 +64,7 @@ python3 -m pip install -r requirements.txt
 
 You may also set up the environment using uv.
 
-[Install Astral uv](https://docs.astral.sh/getting-started/installation/)
+[Install Astral uv](https://docs.astral.sh/uv/getting-started/installation/)
 
 ```bash
 # If you already have uv, update it (example for .sh script install)
