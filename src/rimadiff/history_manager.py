@@ -90,7 +90,9 @@ class HistoryManager:
                 data_rows.append(row)
         self._remove_extra_data(date_ordinal, user_id, data_rows)
         cur.execute(
-            'INSERT INTO UserDataRequest (date_ordinal, user_id, time, timezone, url) '
+            'INSERT INTO UserDataRequest ( '
+                'date_ordinal, user_id, time, timezone, url '
+            ') '
             'VALUES (?, ?, ?, ?, ?)'
             'ON CONFLICT (date_ordinal, user_id) '
             'DO UPDATE SET time = excluded.time, timezone = excluded.timezone',
@@ -154,7 +156,8 @@ class HistoryManager:
         version = self._column_increment(
             'Label', 'version', ('category', 'id'), (category, label_id))
         cur.execute(
-            'INSERT INTO Label (category, id, version, value) VALUES (?, ?, ?, ?)',
+            'INSERT INTO Label (category, id, version, value) '
+            'VALUES (?, ?, ?, ?)',
             (category, label_id, version, label)
             )
         self.db.commit()

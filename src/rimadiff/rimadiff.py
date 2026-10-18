@@ -94,7 +94,8 @@ class RimaDiffCli:
         user_data = na_users = None
         now = datetime.now().astimezone()
         try:
-            user_data, na_users, user_history_time = self._source_user_data(now)
+            user_data, na_users, user_history_time = (
+                self._source_user_data(now))
             category_tables = self._build_tables(user_data, na_users, now)
         except Exception as error:
             err = error
@@ -158,14 +159,16 @@ class RimaDiffCli:
                 time, timezone = next(iter(user_history_time.values()))
                 print(f' {time} {timezone}\n')
             else:
-                variable_tz = len(set(t[1] for t in user_history_time.values())) > 1
+                is_variable_tz = len(
+                    set(t[1] for t in user_history_time.values())
+                    ) > 1
                 _, timezone = next(iter(user_history_time.values()))
-                print(('' if variable_tz else f' ({timezone})'))
+                print(('' if is_variable_tz else f' ({timezone})'))
                 sorted_items = sorted(
                     user_history_time.items(), key=lambda item: item[1][0])
                 for user, (time, timezone) in sorted_items:
                     print(
-                        time + (f' ({timezone})' if variable_tz else '')
+                        time + (f' ({timezone})' if is_variable_tz else '')
                         + f' {user_map(user)}'
                         )
                 print()
@@ -213,18 +216,23 @@ class RimaDiffCli:
                     if time is not None:
                         user_history_time[user] = time, timezone
                 if data is None:
-                    data, category_labels, url, skip_write = self._download_data(user, session)
+                    r = self._download_data(user, session)
+                    data, category_labels, url, skip_write = r
+
                     if data is not None and not skip_write:
                         self.history_manager.write_data(
                             today_ordinal, user_id, data, category_labels,
                             now_time, now_timezone, url
                             )
                         user_original = self._user_orig[user]
-                        self.history_manager.update_user_original(user_id, user_original)
+                        self.history_manager.update_user_original(
+                            user_id, user_original)
                 push_to_dict(data, user, user_id)
 
             for user in new_users:
-                data, category_labels, url, skip_write = self._download_data(user, session)
+                r = self._download_data(user, session)
+                data, category_labels, url, skip_write = r
+
                 user_id = None
                 if data is not None and not skip_write:
                     user_original = self._user_orig[user]
@@ -312,7 +320,8 @@ class RimaDiffCli:
         if resp:
             self._download_success_users.append(user)
             obj = resp.json()
-            data, category_labels, user_response = self._response_json_to_data(obj)
+            data, category_labels, user_response = (
+                self._response_json_to_data(obj))
             if data is None:
                 self._bad_json_users.append(user)
             elif user != user_response.lower():
@@ -367,7 +376,10 @@ class RimaDiffCli:
         table_skill_level.insert(2, combat_row)
 
     def _get_combat_level(self, levels):
-        base = 0.25 * (levels['Defence'] + levels['Hitpoints'] + levels['Prayer']//2)
+        base = (
+            0.25
+            * (levels['Defence'] + levels['Hitpoints'] + levels['Prayer']//2)
+            )
         melee = levels['Attack'] + levels['Strength']
         ranged = levels['Ranged'] * 3 // 2
         mage = levels['Magic'] * 3 // 2
@@ -392,7 +404,10 @@ class RimaDiffCli:
                         if isinstance(rima_val, Number):
                             val = val - rima_val
                             table[row_i][col_i] = val
-                            text = ('+' if val > 0 else '') + f'{val:,}'.replace(',', ' ')
+                            text = (
+                                ('+' if val > 0 else '')
+                                + f'{val:,}'.replace(',', ' ')
+                                )
                         else:
                             table[row_i][col_i] = 0
                             text = 'n/a'
