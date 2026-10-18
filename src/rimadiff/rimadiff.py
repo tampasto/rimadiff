@@ -219,6 +219,7 @@ class RimaDiffCli:
                             today_ordinal, user_id, data, category_labels,
                             now_time, now_timezone, url
                             )
+                        user_original = self._user_orig[user]
                         self.history_manager.update_user_original(user_id, user_original)
                 push_to_dict(data, user, user_id)
 
