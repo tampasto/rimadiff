@@ -77,12 +77,10 @@ uv sync
 ### Running the tool
 
 ```bash
-# pip installation
-cd /path/to/rimadiff
-source .venv/bin/activate
+# pip setup
+source /path/to/rimadiff/.venv/bin/activate
 python3 -m rimadiff
 
-# uv installation
-cd /path/to/rimadiff
-uv run rimadiff
+# uv setup
+uv run --project /path/to/rimadiff rimadiff
 ```
