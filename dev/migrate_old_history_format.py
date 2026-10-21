@@ -69,6 +69,7 @@ def _migrate_data(old_path, hm, rdc):
             user_id = user_id_dict.get(user)
             if user_id is None:
                 user_id = hm.add_user(user, user_response)
+                user_id_dict[user] = user_id
 
             stat_mtime = file_path.stat().st_mtime
             mtime = datetime.fromtimestamp(stat_mtime).astimezone()
