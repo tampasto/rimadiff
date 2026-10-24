@@ -10,8 +10,13 @@ class HistoryManager:
         self.db = None
         self.cursor = None
 
+    def history_exists(self):
+        return self.db_path.exists()
+
     def open_connection(self):
-        write_schema = not self.db_path.exists()
+        write_schema = not self.history_exists()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+
         self.db = sqlite3.connect(self.db_path)
         self.cursor = self.db.cursor()
         cur = self.cursor

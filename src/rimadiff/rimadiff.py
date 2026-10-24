@@ -6,9 +6,10 @@ import urllib.parse
 from collections import Counter
 from datetime import date, datetime, UTC
 from numbers import Number
-from pathlib import Path
+from pathlib import PurePath, Path
 
 import requests
+from platformdirs import PlatformDirs
 
 from rimadiff.history_manager import HistoryManager
 
@@ -98,10 +99,10 @@ class RimaDiffCli:
         fg_def = self.TERMINAL_COLORS[fg] - 10
         return f'\033[{bold_def}{bg_def};{fg_def}m'
 
-    def __init__(self, api_url, history_path, user_setup):
+    def __init__(self, api_url, user_setup, history_manager):
         self.api_url = api_url
-        self.history_manager = HistoryManager(history_path)
         self.user_setup = user_setup
+        self.history_manager = history_manager
 
         self._users = None
         self._user_orig = None
@@ -512,9 +513,17 @@ class RimaDiffCli:
         print()
 
     def list_history(self):
-        self.history_manager.open_connection()
-        snapshots = self.history_manager.get_history_snapshots()
-        self.history_manager.close_connection()
+        snapshots = None
+        if self.history_manager.history_exists():
+            self.history_manager.open_connection()
+            snapshots = self.history_manager.get_history_snapshots()
+            self.history_manager.close_connection()
+        else:
+            print(
+                '\nHistory database does not exist.\n\n'
+                f'Path: {self.history_manager.db_path}\n'
+                )
+            return
 
         headers = ['Num', 'Time']
         align = ['right', 'center']
@@ -533,25 +542,28 @@ class RimaDiffCli:
         self._print_table(table)
 
     def list_users(self, setup_name):
-        self.history_manager.open_connection()
-        counts, latest_snapshot = self.history_manager.get_info_users()
+        counts = latest_snapshot = None
+        if self.history_manager.history_exists():
+            self.history_manager.open_connection()
+            counts, latest_snapshot = self.history_manager.get_info_users()
+            self.history_manager.close_connection()
         # counts: U.name_original, U.name, Count(R.date_ordinal)
-        # latest_snapshot: L.name, R2.date_ordinal, R2.time, R2.timezone
-        self.history_manager.close_connection()
+        # latest_snapshot: U.name, R2.date_ordinal, R2.time, R2.timezone
 
+        users = self.user_setup[setup_name].users
+        user_orig = self.user_setup[setup_name].user_orig.copy()
         user_alias = self.user_setup[setup_name].user_alias
         user_alias_lc = {n.lower(): a for n, a in user_alias.items()}
         rima_lc = self.user_setup[setup_name].rima.lower()
 
-        user_set = (
-            {r[1] for r in counts}
-            | {r[0] for r in latest_snapshot}
-            | set(user_alias_lc)
-            )
-        user_orig = (
-            {r[1]: r[0] for r in counts}
-            | {n.lower(): n for n in user_alias}
-            )
+        user_set = set(users) # Config
+        if counts is not None: # History database
+            user_set |= (
+                {r[1] for r in counts} | {r[0] for r in latest_snapshot})
+
+        # If both database and config aliases, show config aliases
+        if counts is not None:
+            user_orig |= {r[1]: r[0] for r in counts if r[1] not in user_orig}
 
         header = ['Name', 'Alias', 'RIMA', 'Snapshots', 'Latest snapshot']
         align = ['left', 'left', 'center', 'right', 'center']
@@ -560,20 +572,29 @@ class RimaDiffCli:
             for i, h in enumerate(header)
             ]]
 
-        tz_set = {t[3] for t in latest_snapshot}
+        tz_set = set()
+        if latest_snapshot is not None:
+            tz_set = {t[3] for t in latest_snapshot}
         same_tz = (len(tz_set) == 1)
         for row_i, user_lc in enumerate(sorted(user_set)):
-            count_row = next(r for r in counts if r[1] == user_lc)
-            snapshot_row = next(r for r in latest_snapshot if r[0] == user_lc)
+            snapshots = latest_date = '-'
+            date_ordinal = -1
+            if counts is not None:
+                count_row = next(r for r in counts if r[1] == user_lc)
+                snapshot_row = next(
+                    r for r in latest_snapshot if r[0] == user_lc)
 
-            snapshots = count_row[2]
-            _, date_ordinal, time, timezone = snapshot_row
+                snapshots = count_row[2]
+                _, date_ordinal, time, timezone = snapshot_row
+
+                tz_part = ('' if same_tz else f' {timezone}')
+                if date_ordinal is not None:
+                    latest_date = (
+                        f'{date.fromordinal(date_ordinal)} {time}{tz_part}')
+
             user = user_orig[user_lc]
-
             alias = user_alias.get(user_lc, '-')
             is_rima = ('X' if user_lc == rima_lc else '')
-            tz_part = ('' if same_tz else f' {timezone}')
-            latest_date = f'{date.fromordinal(date_ordinal)} {time}{tz_part}'
             text_values = [
                 (user, user),
                 (alias, alias),
@@ -594,18 +615,91 @@ class RimaDiffCli:
             tz_info = f' Timezone {next(iter(tz_set))}.'
         print(f'Aliases and RIMA from user setup "{setup_name}".{tz_info}\n')
 
+    def list_paths(self, config_path, history_path, cfg_history_path):
+        align = ['left', 'left', 'left', 'right', 'center']
+        header = ['Name', 'Path', 'Source', 'Size', 'Modified']
+        time_fmt = '%Y-%m-%d %H:%M'
+
+        table = [[
+            TableCell(h, h, 0, i, align[i], bold=True)
+            for i, h in enumerate(header)
+            ]]
+        paths = [
+            ('Configuration', config_path, False),
+            ('History database', history_path, bool(cfg_history_path))
+            ]
+        hyphen_desc = False
+        errs = []
+        for row_i, (name, path, from_config) in enumerate(paths):
+            row_fg = ('white' if row_i % 2 == 1 else 'blue')
+
+            source = ('Config' if from_config else '-')
+            size = '<err>'
+            modified = '<err>'
+            try:
+                st = path.stat()
+            except FileNotFoundError:
+                size = modified = '-'
+                hyphen_desc = True
+            except OSError as err:
+                errs.append(str(err))
+            else:
+                size = self._size_format(st.st_size)
+                mod_dt = datetime.fromtimestamp(st.st_mtime)
+                modified = mod_dt.strftime(time_fmt)
+
+            row = (name, str(path), source, size, modified)
+            table.append([
+                TableCell(t, t, row_i, i, align[i], fg=row_fg)
+                for i, t in enumerate(row)
+                ])
+
+        print()
+        term_color = RimaDiffCli.terminal_color
+        if errs:
+            print(
+                term_color('black', fg='red') + '\n'.join(errs)
+                + term_color() + '\n'
+                )
+
+        self._print_table(table)
+
+        tz = datetime.now().astimezone().strftime('%z')
+        hyphen_info = ''
+        if hyphen_desc:
+            hyphen_info = 'Hyphen in Size means the file does not exist. '
+        print(f'{hyphen_info}Timezone {tz}.\n')
+
+    def _size_format(self, size):
+        if size/10 > 1024**3:
+            return f'{size//1024**3}G'
+        elif size/10 > 1024**2:
+            return f'{size//1024**2}M'
+        elif size/10 > 1024:
+            return f'{size//1024}k'
+        return f'{size}'
+
 
 def main():
-    config = _read_config()
+    dirs = PlatformDirs(PurePath(__file__).stem, False)
+    data_path = dirs.user_data_path
+
+    config_path = _ensure_config(dirs)
+    config = _read_config(config_path)
+
+    cfg_history_path = config.get('history_path')
+    history_path = _get_history_db_path(dirs, cfg_history_path)
+
     setup_names = list(config['user-setup'])
-    args = _parse_arguments(setup_names)
 
     api_url = config['api_url']
-    history_path_str = config['history_path']
-    history_path = Path(history_path_str).expanduser().resolve()
     user_setup = {
         name: UserSetup(setup) for name, setup in config['user-setup'].items()}
-    cli = RimaDiffCli(api_url, history_path, user_setup)
+
+    history_manager = HistoryManager(history_path)
+    cli = RimaDiffCli(api_url, user_setup, history_manager)
+
+    args = _parse_arguments(setup_names)
     setup_name = args.user_setup or 'default'
 
     if args.list_history:
@@ -613,6 +707,9 @@ def main():
         return
     elif args.list_users:
         cli.list_users(setup_name)
+        return
+    elif args.list_paths:
+        cli.list_paths(config_path, history_path, cfg_history_path)
         return
 
     print_skills = args.skills or args.all_tables
@@ -631,13 +728,22 @@ def main():
         )
 
 
-def _read_config():
-    config_path = Path(CONFIG_PATH).expanduser().resolve()
-    config_path.parent.mkdir(exist_ok=True)
-    if not config_path.exists():
+def _ensure_config(dirs):
+    config_path = dirs.place_config_file('rimadiff.toml')
+    if not config_path.is_file():
         with config_path.open('w', encoding='utf-8') as fp:
             fp.write(DEFAULT_CONFIG.lstrip())
+    return config_path
 
+
+def _get_history_db_path(dirs, cfg_history_path):
+    if cfg_history_path:
+        return Path(cfg_history_path).expanduser().resolve()
+    history_path = dirs.place_data_file('history.db')
+    return history_path
+
+
+def _read_config(config_path):
     with config_path.open('rb') as fp:
         config = tomllib.load(fp)
     return config
@@ -694,6 +800,10 @@ def _parse_arguments(setup_names):
     parser.add_argument(
         '-U', '--list-users', action='store_true',
         help='list information on the users'
+        )
+    parser.add_argument(
+        '-p', '--list-paths', action='store_true',
+        help='list paths used by the script'
         )
     args = parser.parse_args()
     return args
