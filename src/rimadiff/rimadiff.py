@@ -16,16 +16,6 @@ from rimadiff.history_manager import HistoryManager
 
 CONFIG_PATH = '~/.config/rimadiff.toml'
 
-DEFAULT_CONFIG = '''
-api_url = 'https://secure.runescape.com/m=hiscore_oldschool/index_lite.json?player={}'
-history_path = '~/.rimadiff_history.db'
-
-[user-setup.default]
-users = ['Faux', 'Manked', 'Mote Plox', 'Mr Mammal']
-user_alias = {'Manked' = 'PKer', 'Mote Plox' = 'Historian'}
-rima = 'Faux'
-'''
-
 
 class UserSetup:
     def __init__(self, setup):
@@ -731,8 +721,12 @@ def main():
 def _ensure_config(dirs):
     config_path = dirs.place_config_file('rimadiff.toml')
     if not config_path.is_file():
-        with config_path.open('w', encoding='utf-8') as fp:
-            fp.write(DEFAULT_CONFIG.lstrip())
+        default_path = Path(__file__).parent / 'default_config.toml'
+        with (default_path.open('rb') as default_config,
+            config_path.open('wb') as new_config):
+            # Write new default config
+            new_config.write(default_config.read())
+        print(f'\nWrote new configuration file in\n  {config_path}')
     return config_path
 
 
