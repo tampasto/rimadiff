@@ -7,6 +7,8 @@ charset-normalizer==3.5.2
     # via requests
 idna==3.20
     # via requests
+platformdirs==4.13.5
+    # via rimadiff
 requests==2.34.2
     # via rimadiff
 urllib3==2.8.0
