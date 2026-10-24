@@ -235,3 +235,28 @@ class HistoryManager:
         snapshots = cur.fetchall()
         return snapshots
 
+    def get_info_users(self):
+        cur = self.cursor
+        cur.arraysize = 50
+        cur.execute(
+            'SELECT U.name_original, U.name, Count(R.date_ordinal) '
+            'FROM User AS U '
+            'LEFT JOIN UserDataRequest AS R ON U.id = R.user_id '
+            'GROUP BY R.user_id'
+            )
+        counts = cur.fetchall()
+        cur.execute(
+            'WITH latest AS ( '
+                'SELECT U.id, U.name, Max(R1.date_ordinal) AS date_ordinal '
+                'FROM User AS U '
+                'LEFT JOIN UserDataRequest AS R1 ON U.id = R1.user_id '
+                'GROUP BY R1.user_id '
+            ') '
+            'SELECT L.name, R2.date_ordinal, R2.time, R2.timezone '
+            'FROM latest AS L '
+            'LEFT JOIN UserDataRequest AS R2 '
+                'ON L.id = R2.user_id AND L.date_ordinal = R2.date_ordinal'
+            )
+        latest_snapshot = cur.fetchall()
+        return counts, latest_snapshot
+

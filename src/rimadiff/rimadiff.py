@@ -35,6 +35,45 @@ class UserSetup:
         self.rima = setup['rima'].lower()
 
 
+class TableCell:
+    ALIGN = {'right': '>', 'left': '<', 'center': '^'}
+
+    def __init__(
+        self, text, value, row_i, col_i, align='right', bg='black', fg='white',
+        bold=False
+    ):
+        self.text = text
+        self.value = value
+        self.row_i = row_i
+        self.col_i = col_i
+        self.align = align
+        self.bg = bg
+        self.fg = fg
+        self.bold = bold
+
+        self.width = -1
+
+    def __str__(self):
+        return self.text
+
+    def __len__(self):
+        return len(self.text)
+
+    @property
+    def is_column_header(self):
+        return self.row_i == 0
+
+    @property
+    def is_row_header(self):
+        return self.col_i == 0
+
+    def print(self):
+        term_color = RimaDiffCli.terminal_color
+        color_def = term_color(self.bg, self.bold, self.fg)
+        align = TableCell.ALIGN[self.align]
+        print(f'{color_def} {self.text:{align}{self.width}} ', end='')
+
+
 class RimaDiffCli:
     CATEGORY_HEADERS = [
         'Skill level', 'Skill xp', 'Skill rank',
@@ -47,6 +86,7 @@ class RimaDiffCli:
         'green': 42,
         'red': 41,
         'orange': 43,
+        'blue': 104,
     }
 
     @classmethod
@@ -186,7 +226,7 @@ class RimaDiffCli:
         if print_activity_rank:
             print_tables.append((category_tables[4], True, True))
         for table, hide_if_zero, comp_rank in print_tables:
-            self._print_table(table, hide_if_zero, comp_rank)
+            self._print_user_compare_table(table, hide_if_zero, comp_rank)
 
 
     def _source_user_data(self, now):
@@ -386,88 +426,173 @@ class RimaDiffCli:
         combat_level = math.floor(base + 0.325 * max(melee, ranged, mage))
         return combat_level
 
-    def _print_table(self, table, hide_if_zero, comp_rank):
+    def _print_user_compare_table(self, raw_table, hide_if_zero, comp_rank):
         rima_col_i = -1
         try:
-            rima_col_i = table[0].index('RIMA', 1)
+            rima_col_i = raw_table[0].index('RIMA', 1)
         except ValueError:
             pass
 
-        text_table = []
-        for row_i, row in enumerate(table):
-            text_row = []
-            for col_i, val in enumerate(row):
-                text = str(val)
-                if isinstance(val, Number):
-                    if self._show_difference and col_i != rima_col_i:
-                        rima_val = table[row_i][rima_col_i]
-                        if isinstance(rima_val, Number):
-                            val = val - rima_val
-                            table[row_i][col_i] = val
-                            text = (
-                                ('+' if val > 0 else '')
-                                + f'{val:,}'.replace(',', ' ')
-                                )
-                        else:
-                            table[row_i][col_i] = 0
-                            text = 'n/a'
-                    else:
-                        text = f'{val:,}'.replace(',', ' ')
-                text_row.append(text)
-            text_table.append(text_row)
-
-        lens = [max(map(len, col_text)) for col_text in zip(*text_table)]
-
-        term_color = RimaDiffCli.terminal_color
-        row_num = 0
-        for row_i, row in enumerate(text_table):
-            orig_row = table[row_i]
-            if hide_if_zero and all(v == 0 or v == '-' for v in orig_row[1:]):
+        table = []
+        for row_i, raw_row in enumerate(raw_table):
+            if hide_if_zero and all(v == 0 or v == '-' for v in raw_row[1:]):
                 continue
 
-            header_row = (row_i == 0)
-            row_bg = ('black' if row_num % 2 == 0 else 'darkgray')
-            for col_i, text in enumerate(row):
-                bold = (header_row or col_i == 0)
-                bg = row_bg
-                fg = 'white'
-                val = table[row_i][col_i]
-
-                # Highlight RIMA
-                if col_i == rima_col_i:
-                    if header_row:
-                        bg = 'orange'
+            if rima_col_i != -1:
+                rima_val = raw_row[rima_col_i]
+            row = []
+            for col_i, value in enumerate(raw_row):
+                text = str(value)
+                if isinstance(value, Number):
+                    if self._show_difference and col_i != rima_col_i:
+                        text, value = self._get_diff_text(value, rima_val)
                     else:
-                        fg = 'orange'
+                        text = self._format_numeric(value)
 
-                elif col_i > 0 and isinstance(val, Number):
-                    rima_val = table[row_i][rima_col_i]
-                    comp_val = (0 if self._show_difference else rima_val)
-                    if isinstance(comp_val, Number):
-                        if comp_rank:
-                            val, comp_val = comp_val, val
-                        if val > comp_val:
-                            fg = 'green'
-                            bold = True
-                        elif val < comp_val:
-                            fg = 'red'
+                cell = TableCell(text, value, row_i, col_i)
 
-                color_def = term_color(bg, bold, fg)
-                print(f'{color_def} {text:>{lens[col_i]}} ', end='')
+                self._color_user_compare_cell(
+                    cell, rima_val, rima_col_i, comp_rank)
+                row.append(cell)
+            table.append(row)
+
+        for row_i, row in enumerate(table):
+            row_bg = ('black' if row_i % 2 == 0 else 'darkgray')
+            for cell in row:
+                cell.bg = row_bg
+
+        self._print_table(table)
+
+    def _get_diff_text(self, value, rima_val):
+        if isinstance(rima_val, Number):
+            value = value - rima_val
+            text = self._format_numeric(value, show_plus=True)
+        else:
+            value = 0
+            text = 'n/a'
+        return text, value
+
+    def _format_numeric(self, value, show_plus=False):
+        sign = ('+' if show_plus else '')
+        text = f'{value:{sign},}'.replace(',', ' ')
+        return text
+
+    def _color_user_compare_cell(self, cell, rima_val, rima_col_i, comp_rank):
+        if cell.is_column_header or cell.is_row_header:
+            cell.bold = True
+
+        # Highlight RIMA
+        if cell.col_i == rima_col_i:
+            if cell.is_column_header:
+                cell.bg = 'orange'
+            else:
+                cell.fg = 'orange'
+
+        elif not cell.is_row_header and isinstance(cell.value, Number):
+            val_a = cell.value
+            val_b = (0 if self._show_difference else rima_val)
+            if isinstance(val_b, Number):
+                if comp_rank:
+                    val_a, val_b = val_b, val_a
+                if val_a > val_b:
+                    cell.fg = 'green'
+                    cell.bold = True
+                elif val_a < val_b:
+                    cell.fg = 'red'
+
+    def _print_table(self, table):
+        lens = [max(map(len, column)) for column in zip(*table)]
+        term_color = RimaDiffCli.terminal_color
+        for row in table:
+            for cell in row:
+                cell.width = lens[cell.col_i]
+                cell.print()
+            # Reset colors at the end of row
             print(term_color())
-            row_num += 1
         print()
 
     def list_history(self):
         self.history_manager.open_connection()
         snapshots = self.history_manager.get_history_snapshots()
-        print()
+        self.history_manager.close_connection()
+
+        headers = ['Num', 'Time']
+        align = ['right', 'center']
+        table = [[TableCell(h, h, 0, i, align=align[i], bold=True) for i, h in enumerate(headers)]]
         for snapshot_i, (date_ordinal, time, timezone) in enumerate(snapshots):
             date_obj = date.fromordinal(date_ordinal)
             num = len(snapshots) - snapshot_i
-            print(f'[{num}] {date_obj} {time} {timezone}')
+            time = f'{date_obj} {time} {timezone}'
+            text_values = [(f'{num}', num), (time, date_ordinal)]
+            row_fg = ('white' if snapshot_i % 2 == 1 else 'blue')
+            table.append([
+                TableCell(text, value, snapshot_i, i, fg=row_fg, align=align[i])
+                for i, (text, value) in enumerate(text_values)
+                ])
         print()
+        self._print_table(table)
+
+    def list_users(self, setup_name):
+        self.history_manager.open_connection()
+        counts, latest_snapshot = self.history_manager.get_info_users()
+        # counts: U.name_original, U.name, Count(R.date_ordinal)
+        # latest_snapshot: L.name, R2.date_ordinal, R2.time, R2.timezone
         self.history_manager.close_connection()
+
+        user_alias = self.user_setup[setup_name].user_alias
+        user_alias_lc = {n.lower(): a for n, a in user_alias.items()}
+        rima_lc = self.user_setup[setup_name].rima.lower()
+
+        user_set = (
+            {r[1] for r in counts}
+            | {r[0] for r in latest_snapshot}
+            | set(user_alias_lc)
+            )
+        user_orig = (
+            {r[1]: r[0] for r in counts}
+            | {n.lower(): n for n in user_alias}
+            )
+
+        header = ['Name', 'Alias', 'RIMA', 'Snapshots', 'Latest snapshot']
+        align = ['left', 'left', 'center', 'right', 'center']
+        table = [[
+            TableCell(h, h, 0, i, align[i], bold=True)
+            for i, h in enumerate(header)
+            ]]
+
+        tz_set = {t[3] for t in latest_snapshot}
+        same_tz = (len(tz_set) == 1)
+        for row_i, user_lc in enumerate(sorted(user_set)):
+            count_row = next(r for r in counts if r[1] == user_lc)
+            snapshot_row = next(r for r in latest_snapshot if r[0] == user_lc)
+
+            snapshots = count_row[2]
+            _, date_ordinal, time, timezone = snapshot_row
+            user = user_orig[user_lc]
+
+            alias = user_alias.get(user_lc, '-')
+            is_rima = ('X' if user_lc == rima_lc else '')
+            tz_part = ('' if same_tz else f' {timezone}')
+            latest_date = f'{date.fromordinal(date_ordinal)} {time}{tz_part}'
+            text_values = [
+                (user, user),
+                (alias, alias),
+                (is_rima, is_rima),
+                (str(snapshots), snapshots),
+                (latest_date, date_ordinal),
+                ]
+            row_fg = ('white' if row_i % 2 == 1 else 'blue')
+            row = [
+                TableCell(text, value, row_i, i, align[i], fg=row_fg)
+                for i, (text, value) in enumerate(text_values)
+                ]
+            table.append(row)
+        print()
+        self._print_table(table)
+        tz_info = ''
+        if same_tz:
+            tz_info = f' Timezone {next(iter(tz_set))}.'
+        print(f'Aliases and RIMA from user setup "{setup_name}".{tz_info}\n')
 
 
 def main():
@@ -481,12 +606,14 @@ def main():
     user_setup = {
         name: UserSetup(setup) for name, setup in config['user-setup'].items()}
     cli = RimaDiffCli(api_url, history_path, user_setup)
+    setup_name = args.user_setup or 'default'
 
     if args.list_history:
         cli.list_history()
         return
-
-    setup_name = args.user_setup or 'default'
+    elif args.list_users:
+        cli.list_users(setup_name)
+        return
 
     print_skills = args.skills or args.all_tables
     print_xp = args.xp or args.all_tables
@@ -563,6 +690,10 @@ def _parse_arguments(setup_names):
     parser.add_argument(
         '-l', '--list-history', action='store_true',
         help='list history snapshots'
+        )
+    parser.add_argument(
+        '-U', '--list-users', action='store_true',
+        help='list information on the users'
         )
     args = parser.parse_args()
     return args
