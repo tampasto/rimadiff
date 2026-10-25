@@ -1,1 +1,1 @@
-from rimadiff.rimadiff import main
+from rimadiff.__main__ import main
