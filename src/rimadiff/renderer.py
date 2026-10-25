@@ -11,7 +11,7 @@ from rimadiff.rimadiff_common import RimadiffCommon
 from rimadiff.table_cell import TableCell
 
 
-class RimaDiffCli(RimadiffCommon):
+class Renderer(RimadiffCommon):
     CATEGORY_HEADERS = [
         'Skill level', 'Skill xp', 'Skill rank',
         'Activity', 'Activity rank'
@@ -210,7 +210,7 @@ class RimaDiffCli(RimadiffCommon):
 
     def _build_tables(self, user_data, na_users, now):
         # label_id_rows[category] = [label_id, label_id, ...]
-        category_stop = len(RimaDiffCli.CATEGORY_HEADERS)
+        category_stop = len(Renderer.CATEGORY_HEADERS)
         label_id_row_sets = [set() for _ in range(category_stop)]
         for data in user_data.values():
             for category, label_values in enumerate(data):
@@ -239,7 +239,7 @@ class RimaDiffCli(RimadiffCommon):
         today_ordinal = now.toordinal()
         for category in range(category_stop):
             header_row = [
-                RimaDiffCli.CATEGORY_HEADERS[category], *user_column_headers]
+                Renderer.CATEGORY_HEADERS[category], *user_column_headers]
             table = [header_row]
             for label_id in label_id_rows[category]:
                 for user in self._users:

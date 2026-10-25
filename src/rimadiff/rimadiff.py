@@ -1,7 +1,7 @@
 import rimadiff.cli_arguments
 from rimadiff.config_reader import ConfigReader
 from rimadiff.history_manager import HistoryManager
-from rimadiff.rima_diff_cli import RimaDiffCli
+from rimadiff.renderer import Renderer
 
 
 def main():
@@ -10,7 +10,7 @@ def main():
     config.read()
 
     history_manager = HistoryManager(config.history_path)
-    cli = RimaDiffCli(config, history_manager)
+    cli = Renderer(config, history_manager)
 
     args = rimadiff.cli_arguments.parse_arguments(config.setup_names)
     setup_name = args.user_setup or 'default'
