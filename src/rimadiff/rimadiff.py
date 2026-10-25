@@ -17,16 +17,102 @@ from rimadiff.history_manager import HistoryManager
 CONFIG_PATH = '~/.config/rimadiff.toml'
 
 
-class UserSetup:
-    def __init__(self, setup):
-        self.users = [u.lower() for u in setup['users']]
-        self.user_orig = {u.lower(): u for u in setup['users']}
-        self.user_alias = {
-            u.lower(): a for u, a in setup['user_alias'].items()}
-        self.rima = setup['rima'].lower()
+class RimadiffCommon:
+    TERMINAL_COLORS = {
+        'white': 107,
+        'black': 40,
+        'darkgray': '237',
+        'green': 42,
+        'red': 41,
+        'yellow': 103,
+        'orange': 43,
+        'blue': 104,
+    }
+
+    def term_color(self, bg=None, bold=False, fg='white'):
+        a = '\033['
+        out = a
+        a = f'm{a}'
+        if bg is None:
+            out += '0'
+        else:
+            if bold:
+                out += f'1{a}'
+
+            bg_def = RimadiffCommon.TERMINAL_COLORS[bg]
+            if isinstance(bg_def, str):
+                out += f'48;5;{bg_def}{a}'
+            else:
+                out += f'{bg_def}{a}'
+
+            fg_def = RimadiffCommon.TERMINAL_COLORS[fg]
+            if isinstance(fg_def, str):
+                out += '38;5;{fg_def}'
+            else:
+                out += f'{fg_def-10}'
+        return out + 'm'
+
+    def error(self, msg_err, extra=''):
+        msg = str(msg_err)
+        if isinstance(msg_err, Exception):
+            msg = f'{type(msg_err).__name__}: {msg_err}'
+        print(
+            self.term_color('black', fg='red') + msg + self.term_color() + '\n'
+            )
+        if extra:
+            print(f'{extra}\n')
+
+    def quit_error(self, msg_err, extra=''):
+        print()
+        self.error(msg_err, extra)
+        quit()
+
+    def warning(self, msg):
+        print(
+            self.term_color('black', fg='yellow') + str(msg) + self.term_color()
+            + '\n'
+            )
+
+    def __repr__(self):
+        class_name = type(self).__name__
+        pub_attrs = ', '.join(
+            f'{n}={v!r}'
+            for n, v in self.__dict__.items() if not n.startswith('_')
+            )
+        return f'{class_name}({pub_attrs})'
 
 
-class TableCell:
+class UserSetup(RimadiffCommon):
+    ERROR_USERS = 'Missing key users in user-setup table or it is not a list.'
+    ERROR_CONFIG = 'Configuration path: {}'
+    WARN_ALIAS = (
+        'Key user_alias in user-setup table must be a TOML inline table.')
+
+    def __init__(self, setup, history_path):
+        users = setup.get('users')
+        cls = type(self)
+        if not isinstance(users, list):
+            self.quit_error(cls.ERROR_USERS, cls.ERROR_CONFIG.format(history_path))
+        self.users = [str(u).lower() for u in setup['users']]
+        self.user_orig = {str(u).lower(): str(u) for u in setup['users']}
+
+        self.user_alias = {}
+        user_alias = setup.get('user_alias')
+        if user_alias:
+            if not isinstance(user_alias, dict):
+                _warning(cls.WARN_ALIAS)
+            else:
+                self.user_alias = {
+                    str(u).lower(): str(a) for u, a in user_alias.items()}
+
+        self.rima = self.rima_orig = None
+        rima = setup.get('rima')
+        if rima:
+            self.rima = str(rima).lower()
+            self.rima_orig = str(rima)
+
+
+class TableCell(RimadiffCommon):
     ALIGN = {'right': '>', 'left': '<', 'center': '^'}
 
     def __init__(
@@ -50,6 +136,9 @@ class TableCell:
     def __len__(self):
         return len(self.text)
 
+    def __repr__(self):
+        return _get_repr(self)
+
     @property
     def is_column_header(self):
         return self.row_i == 0
@@ -59,39 +148,22 @@ class TableCell:
         return self.col_i == 0
 
     def print(self):
-        term_color = RimaDiffCli.terminal_color
-        color_def = term_color(self.bg, self.bold, self.fg)
+        color_def = self.term_color(self.bg, self.bold, self.fg)
         align = TableCell.ALIGN[self.align]
-        print(f'{color_def} {self.text:{align}{self.width}} ', end='')
+        end = ''
+        if self.bold:
+            end = self.term_color()
+        print(f'{color_def} {self.text:{align}{self.width}} {end}', end='')
 
 
-class RimaDiffCli:
+class RimaDiffCli(RimadiffCommon):
     CATEGORY_HEADERS = [
         'Skill level', 'Skill xp', 'Skill rank',
         'Activity', 'Activity rank'
         ]
-    TERMINAL_COLORS = {
-        'white': 107,
-        'black': 40,
-        'darkgray': 100,
-        'green': 42,
-        'red': 41,
-        'orange': 43,
-        'blue': 104,
-    }
 
-    @classmethod
-    def terminal_color(self, bg=None, bold=False, fg='white'):
-        if bg is None:
-            return '\033[m'
-        bold_def = ('1;' if bold else '')
-        bg_def = self.TERMINAL_COLORS[bg]
-        fg_def = self.TERMINAL_COLORS[fg] - 10
-        return f'\033[{bold_def}{bg_def};{fg_def}m'
-
-    def __init__(self, api_url, user_setup, history_manager):
-        self.api_url = api_url
-        self.user_setup = user_setup
+    def __init__(self, config, history_manager):
+        self.config = config
         self.history_manager = history_manager
 
         self._users = None
@@ -112,13 +184,28 @@ class RimaDiffCli:
         print_skills, print_xp, print_skill_rank,
         print_activities, print_activity_rank
     ):
-        self._users = self.user_setup[setup_name].users
-        self._user_orig = self.user_setup[setup_name].user_orig
-        self._user_alias = self.user_setup[setup_name].user_alias
-        self._rima = self.user_setup[setup_name].rima
+        setup = self.config.get_user_setup(setup_name)
+        self._users = setup.users
+        self._user_orig = setup.user_orig
+        self._user_alias = setup.user_alias
+        self._rima = setup.rima
+        self._rima_orig = setup.rima_orig
 
         self._force_download = force_download
         self._show_difference = show_difference
+
+        no_rima = not self._rima
+        invalid_rima = self._rima not in self._users
+        if no_rima or invalid_rima:
+            # Complain about RIMA
+            prolog = ''
+            if show_difference:
+                prolog = 'Cannot calculate differences, '
+            epilog = ('set' if no_rima else f'a user ({self._rima_orig})')
+            if show_difference or (invalid_rima and not no_rima):
+                self.warning(f'{prolog}RIMA is not {epilog}.')
+                self._show_difference = False
+
         self.history_manager.open_connection()
 
         err = None
@@ -127,7 +214,8 @@ class RimaDiffCli:
         try:
             user_data, na_users, user_history_time = (
                 self._source_user_data(now))
-            category_tables = self._build_tables(user_data, na_users, now)
+            category_tables, rima_cols = self._build_tables(
+                user_data, na_users, now)
         except Exception as error:
             err = error
         finally:
@@ -146,14 +234,9 @@ class RimaDiffCli:
                 )
 
         dl_fail = self._download_fail_users
-        term_color = RimaDiffCli.terminal_color
         if len(dl_fail):
-            print(
-                term_color('red')
-                + 'Could not download: '
-                + ', '.join(map(user_map, dl_fail))
-                + term_color() + '\n'
-                )
+            self.error(
+                'Could not download: ' + ', '.join(map(user_map, dl_fail)))
         dl_errors = self._download_fail_errors
         if dl_errors.total():
             for text, count in dl_errors.items():
@@ -162,26 +245,14 @@ class RimaDiffCli:
             print()
         json_fail = self._bad_json_users
         if len(json_fail):
-            print(
-                term_color('red')
-                + 'Bad API JSON: '
-                + ', '.join(map(user_map, json_fail))
-                + term_color() + '\n'
-                )
+            self.error('Bad API JSON: ' + ', '.join(map(user_map, json_fail)))
         if len(self._wrong_user_data):
-            print(
-                term_color('red')
-                + 'API returned data for wrong users, snapshots not saved in '
-                  'history:'
-                + term_color()
+            self.error(
+                'API returned data for wrong users, snapshots not saved in '
+                'history:'
                 )
             for user, user_response in self._wrong_user_data:
-                print(
-                    '  ' + term_color('red')
-                    + f'Requested {user_map(user)}, '
-                      f'got {user_response}'
-                    + term_color()
-                    )
+                print(f'  Requested {user_map(user)}, got {user_response}')
             print()
 
         if len(user_history_time):
@@ -207,17 +278,23 @@ class RimaDiffCli:
         self._add_combat_level(category_tables[0])
         print_tables = []
         if print_skills:
-            print_tables.append((category_tables[0], False, False))
+            print_tables.append((
+                category_tables[0], rima_cols[0], False, False))
         if print_xp:
-            print_tables.append((category_tables[1], False, False))
+            print_tables.append((
+                category_tables[1], rima_cols[1], False, False))
         if print_skill_rank:
-            print_tables.append((category_tables[2], False, True))
+            print_tables.append((
+                category_tables[2], rima_cols[2], False, True))
         if print_activities:
-            print_tables.append((category_tables[3], True, False))
+            print_tables.append((
+                category_tables[3], rima_cols[3], True, False))
         if print_activity_rank:
-            print_tables.append((category_tables[4], True, True))
-        for table, hide_if_zero, comp_rank in print_tables:
-            self._print_user_compare_table(table, hide_if_zero, comp_rank)
+            print_tables.append((
+                category_tables[4], rima_cols[4], True, True))
+        for table, rima_col_i, hide_if_zero, comp_rank in print_tables:
+            self._print_user_compare_table(
+                table, hide_if_zero, comp_rank, rima_col_i)
 
 
     def _source_user_data(self, now):
@@ -286,17 +363,21 @@ class RimaDiffCli:
         label_id_rows = [sorted(label_ids) for label_ids in label_id_row_sets]
 
         user_column_headers = []
-        for user in self._users:
+        rima_cols = []
+        rima_col_i = -1
+        for user_i, user in enumerate(self._users):
             col_header = self._user_orig[user]
 
             # Nayta dorkalle RIMA
             if user == self._rima:
                 col_header = 'RIMA'
+                rima_col_i = user_i + 1
 
             elif user in self._user_alias:
                 col_header = self._user_alias[user]
 
             user_column_headers.append(col_header)
+        rima_cols = [rima_col_i] * category_stop
 
         category_tables = []
         user_id_dict = self.history_manager.get_user_id_dict()
@@ -329,14 +410,14 @@ class RimaDiffCli:
                 table.append(row)
             category_tables.append(table)
 
-        return category_tables
+        return category_tables, rima_cols
 
     def _download_data(self, user, session):
         data = None
         category_labels = None
         user_original = self._user_orig[user]
         quoted_user = urllib.parse.quote(user_original, safe='')
-        url = self.api_url.format(quoted_user)
+        url = self.config.api_url.format(quoted_user)
         resp = None
         try:
             resp = session.get(url)
@@ -417,33 +498,29 @@ class RimaDiffCli:
         combat_level = math.floor(base + 0.325 * max(melee, ranged, mage))
         return combat_level
 
-    def _print_user_compare_table(self, raw_table, hide_if_zero, comp_rank):
-        rima_col_i = -1
-        try:
-            rima_col_i = raw_table[0].index('RIMA', 1)
-        except ValueError:
-            pass
-
+    def _print_user_compare_table(
+        self, raw_table, hide_if_zero, comp_rank, rima_col_i
+    ):
         table = []
         for row_i, raw_row in enumerate(raw_table):
             if hide_if_zero and all(v == 0 or v == '-' for v in raw_row[1:]):
                 continue
 
+            rima_val = None
             if rima_col_i != -1:
                 rima_val = raw_row[rima_col_i]
             row = []
             for col_i, value in enumerate(raw_row):
                 text = str(value)
                 if isinstance(value, Number):
-                    if self._show_difference and col_i != rima_col_i:
+                    if (rima_col_i != -1 and self._show_difference
+                        and col_i != rima_col_i):
+                        # Calculate diff column
                         text, value = self._get_diff_text(value, rima_val)
                     else:
                         text = self._format_numeric(value)
 
                 cell = TableCell(text, value, row_i, col_i)
-
-                self._color_user_compare_cell(
-                    cell, rima_val, rima_col_i, comp_rank)
                 row.append(cell)
             table.append(row)
 
@@ -451,6 +528,10 @@ class RimaDiffCli:
             row_bg = ('black' if row_i % 2 == 0 else 'darkgray')
             for cell in row:
                 cell.bg = row_bg
+                if rima_col_i != -1:
+                    rima_val = row[rima_col_i].value
+                    self._color_user_compare_cell(
+                        cell, rima_val, rima_col_i, comp_rank)
 
         self._print_table(table)
 
@@ -464,42 +545,50 @@ class RimaDiffCli:
         return text, value
 
     def _format_numeric(self, value, show_plus=False):
-        sign = ('+' if show_plus else '')
+        sign = ('+' if show_plus and value > 0 else '')
         text = f'{value:{sign},}'.replace(',', ' ')
         return text
 
     def _color_user_compare_cell(self, cell, rima_val, rima_col_i, comp_rank):
-        if cell.is_column_header or cell.is_row_header:
-            cell.bold = True
-
         # Highlight RIMA
         if cell.col_i == rima_col_i:
+            cell.bold = True
             if cell.is_column_header:
                 cell.bg = 'orange'
             else:
                 cell.fg = 'orange'
+            return
 
-        elif not cell.is_row_header and isinstance(cell.value, Number):
+        if cell.is_column_header or cell.is_row_header:
+            cell.bold = True
+            return
+
+        is_available = isinstance(cell.value, Number)
+        rima_available = isinstance(rima_val, Number)
+        show_diff = self._show_difference
+
+        if comp_rank and is_available and not rima_available:
+            cell.fg = 'green'
+        elif comp_rank and not is_available and rima_available:
+            cell.fg = 'red'
+        elif is_available and rima_available:
             val_a = cell.value
-            val_b = (0 if self._show_difference else rima_val)
-            if isinstance(val_b, Number):
-                if comp_rank:
-                    val_a, val_b = val_b, val_a
-                if val_a > val_b:
-                    cell.fg = 'green'
-                    cell.bold = True
-                elif val_a < val_b:
-                    cell.fg = 'red'
+            val_b = (0 if show_diff else rima_val)
+            if comp_rank:
+                val_a, val_b = val_b, val_a
+            if val_a > val_b:
+                cell.fg = 'green'
+            elif val_a < val_b:
+                cell.fg = 'red'
 
     def _print_table(self, table):
         lens = [max(map(len, column)) for column in zip(*table)]
-        term_color = RimaDiffCli.terminal_color
         for row in table:
             for cell in row:
                 cell.width = lens[cell.col_i]
                 cell.print()
             # Reset colors at the end of row
-            print(term_color())
+            print(self.term_color())
         print()
 
     def list_history(self):
@@ -517,7 +606,7 @@ class RimaDiffCli:
 
         headers = ['Num', 'Time']
         align = ['right', 'center']
-        table = [[TableCell(h, h, 0, i, align=align[i], bold=True) for i, h in enumerate(headers)]]
+        table = [[TableCell(h, h, 0, i, align[i], bold=True) for i, h in enumerate(headers)]]
         for snapshot_i, (date_ordinal, time, timezone) in enumerate(snapshots):
             date_obj = date.fromordinal(date_ordinal)
             num = len(snapshots) - snapshot_i
@@ -525,7 +614,7 @@ class RimaDiffCli:
             text_values = [(f'{num}', num), (time, date_ordinal)]
             row_fg = ('white' if snapshot_i % 2 == 1 else 'blue')
             table.append([
-                TableCell(text, value, snapshot_i, i, fg=row_fg, align=align[i])
+                TableCell(text, value, snapshot_i, i, align[i], fg=row_fg)
                 for i, (text, value) in enumerate(text_values)
                 ])
         print()
@@ -540,11 +629,12 @@ class RimaDiffCli:
         # counts: U.name_original, U.name, Count(R.date_ordinal)
         # latest_snapshot: U.name, R2.date_ordinal, R2.time, R2.timezone
 
-        users = self.user_setup[setup_name].users
-        user_orig = self.user_setup[setup_name].user_orig.copy()
-        user_alias = self.user_setup[setup_name].user_alias
+        setup = self.config.get_user_setup(setup_name)
+        users = setup.users
+        user_orig = setup.user_orig.copy()
+        user_alias = setup.user_alias
         user_alias_lc = {n.lower(): a for n, a in user_alias.items()}
-        rima_lc = self.user_setup[setup_name].rima.lower()
+        rima_lc = setup.rima
 
         user_set = set(users) # Config
         if counts is not None: # History database
@@ -605,7 +695,7 @@ class RimaDiffCli:
             tz_info = f' Timezone {next(iter(tz_set))}.'
         print(f'Aliases and RIMA from user setup "{setup_name}".{tz_info}\n')
 
-    def list_paths(self, config_path, history_path, cfg_history_path):
+    def list_paths(self):
         align = ['left', 'left', 'left', 'right', 'center']
         header = ['Name', 'Path', 'Source', 'Size', 'Modified']
         time_fmt = '%Y-%m-%d %H:%M'
@@ -615,8 +705,9 @@ class RimaDiffCli:
             for i, h in enumerate(header)
             ]]
         paths = [
-            ('Configuration', config_path, False),
-            ('History database', history_path, bool(cfg_history_path))
+            ('Configuration', self.config.path, False),
+            ('History database', self.config.history_path,
+                self.config.history_path_from_config)
             ]
         hyphen_desc = False
         errs = []
@@ -645,12 +736,8 @@ class RimaDiffCli:
                 ])
 
         print()
-        term_color = RimaDiffCli.terminal_color
         if errs:
-            print(
-                term_color('black', fg='red') + '\n'.join(errs)
-                + term_color() + '\n'
-                )
+            self.error('\n'.join(errs))
 
         self._print_table(table)
 
@@ -670,26 +757,68 @@ class RimaDiffCli:
         return f'{size}'
 
 
+class ConfigReader(RimadiffCommon):
+    DEFAULT_CONFIG = 'default_config.toml'
+
+    def __init__(self):
+        self._dirs = PlatformDirs('rimadiff', False)
+        self.path = self._dirs.place_config_file('rimadiff.toml')
+        self.history_path = None
+        self.history_path_from_config = None
+        self.api_url = None
+        self.setup_names = None
+        self.user_setup = None
+
+    def ensure_config(self):
+        if not self.path.is_file():
+            default_path = Path(__file__).parent / ConfigReader.DEFAULT_CONFIG
+            with (default_path.open('rb') as default_config,
+                self.path.open('wb') as new_config):
+                # Write new default config
+                new_config.write(default_config.read())
+            self.warning(f'\nWrote new configuration file in\n  {self.path}')
+
+    def read(self):
+        toml = None
+        try:
+            with self.path.open('rb') as fp:
+                toml = tomllib.load(fp)
+        except Exception as err:
+            self.quit_error(err, f'Configuration path: {self.path}')
+
+        self._determine_history_path(toml)
+        self.api_url = toml['api_url']
+        self.setup_names = list(toml['user-setup'])
+        self.user_setup = {
+            name: UserSetup(setup, self.history_path)
+            for name, setup in toml['user-setup'].items()
+            }
+
+    def _determine_history_path(self, toml):
+        history_path = None
+        config_path = toml.get('history_path')
+        from_config = False
+        if config_path:
+            history_path = Path(config_path).expanduser().resolve()
+            from_config = True
+        else:
+            history_path = self._dirs.place_data_file('history.db')
+        self.history_path = history_path
+        self.history_path_from_config = from_config
+
+    def get_user_setup(self, setup_name):
+        return self.user_setup.get(setup_name)
+
+
 def main():
-    dirs = PlatformDirs(PurePath(__file__).stem, False)
-    data_path = dirs.user_data_path
+    config = ConfigReader()
+    config.ensure_config()
+    config.read()
 
-    config_path = _ensure_config(dirs)
-    config = _read_config(config_path)
+    history_manager = HistoryManager(config.history_path)
+    cli = RimaDiffCli(config, history_manager)
 
-    cfg_history_path = config.get('history_path')
-    history_path = _get_history_db_path(dirs, cfg_history_path)
-
-    setup_names = list(config['user-setup'])
-
-    api_url = config['api_url']
-    user_setup = {
-        name: UserSetup(setup) for name, setup in config['user-setup'].items()}
-
-    history_manager = HistoryManager(history_path)
-    cli = RimaDiffCli(api_url, user_setup, history_manager)
-
-    args = _parse_arguments(setup_names)
+    args = _parse_arguments(config.setup_names)
     setup_name = args.user_setup or 'default'
 
     if args.list_history:
@@ -699,7 +828,7 @@ def main():
         cli.list_users(setup_name)
         return
     elif args.list_paths:
-        cli.list_paths(config_path, history_path, cfg_history_path)
+        cli.list_paths()
         return
 
     print_skills = args.skills or args.all_tables
@@ -716,31 +845,6 @@ def main():
         print_skills, print_xp, print_skill_rank,
         print_activities, print_activity_rank
         )
-
-
-def _ensure_config(dirs):
-    config_path = dirs.place_config_file('rimadiff.toml')
-    if not config_path.is_file():
-        default_path = Path(__file__).parent / 'default_config.toml'
-        with (default_path.open('rb') as default_config,
-            config_path.open('wb') as new_config):
-            # Write new default config
-            new_config.write(default_config.read())
-        print(f'\nWrote new configuration file in\n  {config_path}')
-    return config_path
-
-
-def _get_history_db_path(dirs, cfg_history_path):
-    if cfg_history_path:
-        return Path(cfg_history_path).expanduser().resolve()
-    history_path = dirs.place_data_file('history.db')
-    return history_path
-
-
-def _read_config(config_path):
-    with config_path.open('rb') as fp:
-        config = tomllib.load(fp)
-    return config
 
 
 def _parse_arguments(setup_names):
