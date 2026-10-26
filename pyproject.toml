@@ -35,7 +35,7 @@ dependencies = [
 Homepage = "https://github.com/tampasto/rimadiff"
 
 [project.scripts]
-rimadiff = "rimadiff:main"
+rimadiff = "rimadiff:cli"
 
 [build-system]
 requires = ["uv_build>=0.13.1,<0.14.0"]

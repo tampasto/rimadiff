@@ -35,9 +35,7 @@ class Renderer(RimadiffCommon):
         self._wrong_user_data = []
 
     def print_tables(
-        self, setup_name, force_download, show_difference,
-        print_skills, print_xp, print_skill_rank,
-        print_activities, print_activity_rank
+        self, setup_name, force_download, show_difference, show_table
     ):
         setup = self.config.get_user_setup(setup_name)
         self._users = setup.users
@@ -132,19 +130,19 @@ class Renderer(RimadiffCommon):
 
         self._add_combat_level(category_tables[0])
         print_tables = []
-        if print_skills:
+        if show_table['skill']:
             print_tables.append((
                 category_tables[0], rima_cols[0], False, False))
-        if print_xp:
+        if show_table['xp']:
             print_tables.append((
                 category_tables[1], rima_cols[1], False, False))
-        if print_skill_rank:
+        if show_table['skill-rank']:
             print_tables.append((
                 category_tables[2], rima_cols[2], False, True))
-        if print_activities:
+        if show_table['activity']:
             print_tables.append((
                 category_tables[3], rima_cols[3], True, False))
-        if print_activity_rank:
+        if show_table['activity-rank']:
             print_tables.append((
                 category_tables[4], rima_cols[4], True, True))
         for table, rima_col_i, hide_if_zero, comp_rank in print_tables:
