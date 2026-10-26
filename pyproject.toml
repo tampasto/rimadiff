@@ -27,7 +27,8 @@ classifiers = [
 requires-python = ">=3.11"
 dependencies = [
     'requests>=2.34',
-    'platformdirs>=4.13'
+    'platformdirs>=4.13',
+    'click~=8.5'
 ]
 
 [project.urls]
