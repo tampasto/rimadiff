@@ -16,7 +16,6 @@ class ConfigReader(RimadiffCommon):
         self.history_path = None
         self.history_path_from_config = None
         self.api_url = None
-        self.setup_names = None
         self.user_setup = None
 
     def ensure_config(self):
@@ -38,11 +37,16 @@ class ConfigReader(RimadiffCommon):
 
         self._determine_history_path(toml)
         self.api_url = toml['api_url']
-        self.setup_names = list(toml['user-setup'])
         self.user_setup = {
             name: UserSetup(setup, self.history_path)
             for name, setup in toml['user-setup'].items()
             }
+
+    def check_user_setup(self, name):
+        valid_names = list(self.user_setup.keys())
+        if self.user_setup.get(name) is None:
+            return False, valid_names
+        return True, valid_names
 
     def _determine_history_path(self, toml):
         history_path = None

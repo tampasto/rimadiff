@@ -10,7 +10,7 @@ from click import secho
     invoke_without_command=True,
     context_settings={'help_option_names': ['-h', '--help']}
     )
-@click.option('-u', '--user-setup', default='default',
+@click.option('-s', '--user-setup', default='default',
     metavar='NAME', envvar='RIMADIFF_USER_SETUP',
     help='Name of user setup, using "default" if not given'
     )
@@ -62,6 +62,14 @@ def cli(ctx, user_setup, force_download, difference, table):
     config = ConfigReader()
     config.ensure_config()
     config.read()
+    is_valid, valid_names = config.check_user_setup(user_setup)
+    if not is_valid:
+        click.echo(
+            ctx.get_usage()
+            + f'\n\nError: No such user setup {user_setup!r}.\n'
+            f"Current setups: {', '.join(valid_names)}"
+            )
+        return
 
     history_manager = HistoryManager(config.history_path)
     renderer = Renderer(config, history_manager)
@@ -139,7 +147,7 @@ def history():
 
 
 @cli.command()
-@click.option('-u', '--user-setup', default='default',
+@click.option('-s', '--user-setup', default='default',
     metavar='NAME', envvar='RIMADIFF_USER_SETUP',
     help='Name of user setup, using "default" if not given')
 def user(user_setup):
