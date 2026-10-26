@@ -1,7 +1,7 @@
 # rimadiff
 Compare OSRS game hiscores in terminal.
 
-The script can display comparison tables for
+The CLI can display comparison tables for
 
 * Skill levels
 * Skill experiences
@@ -11,7 +11,7 @@ The script can display comparison tables for
 
 There is a special username defined as RIMA which will be the focus of
 comparison. RIMA is highlighted and it is possible to calculate relative
-differences against this user.
+differences against this user. Setting up RIMA username is optional.
 
 The script creates a configuration file in `~/.config/rimadiff.toml` and
 stores all downloaded datasets by default in an
