@@ -9,7 +9,7 @@ from rimadiff.user_setup import UserSetup
 
 
 class ConfigReader(RimadiffCommon):
-    DEFAULT_CONFIG = 'default_config.toml'
+    DEFAULT_CONFIG = 'config_default_general.toml'
     DEFAULT_COLOUR_CONFIG = 'config_default_colour.toml'
 
     def __init__(self):
