@@ -1,87 +1,82 @@
+import copy
 import json
 import math
 import urllib.parse
-from collections import Counter
+from collections import Counter, namedtuple
 from datetime import date, datetime
 from numbers import Number
 
+import click
 import requests
 
+from rimadiff.api_response import APIResponse
+from rimadiff.history_manager import HistoryManager
 from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.table import Table
 from rimadiff.table_cell import TableCell
 
 
 class Renderer(RimadiffCommon):
-    CATEGORY_HEADERS = [
-        'Skill level', 'Skill xp', 'Skill rank',
-        'Activity', 'Activity rank'
-        ]
-
-    def __init__(self, config, history_manager):
+    def __init__(self, config):
         self.config = config
-        self.history_manager = history_manager
 
-        self._users = None
-        self._user_orig = None
-        self._user_alias = None
-        self._rima = None
         self._force_download = False
-        self._show_difference = False
 
         self._download_success_users = []
         self._download_fail_users = []
         self._download_fail_errors = Counter()
         self._bad_json_users = []
         self._wrong_user_data = []
+        self._non_numeric_categories = {}
+        self._non_int_categories = {}
 
-    def print_tables(
-        self, setup_name, force_download, show_difference, show_table
-    ):
+    def print_tables(self, setup_name, force_download, table_names):
         setup = self.config.get_user_setup(setup_name)
-        self._users = setup.users
-        self._user_orig = setup.user_orig
-        self._user_alias = setup.user_alias
-        self._rima = setup.rima
-        self._rima_orig = setup.rima_orig
 
         self._force_download = force_download
-        self._show_difference = show_difference
 
-        no_rima = not self._rima
-        invalid_rima = self._rima not in self._users
-        if no_rima or invalid_rima:
-            # Complain about RIMA
-            prolog = ''
-            if show_difference:
-                prolog = 'Cannot calculate differences, '
-            epilog = ('set' if no_rima else f'a user ({self._rima_orig})')
-            if show_difference or (invalid_rima and not no_rima):
-                self.warning(f'{prolog}RIMA is not {epilog}.')
-                self._show_difference = False
-
-        self.history_manager.open_connection()
+        self._validate_rima(setup, table_names)
 
         err = None
-        user_data = na_users = None
         now = datetime.now().astimezone()
-        try:
-            user_data, na_users, user_history_time = (
-                self._source_user_data(now))
-            category_tables, rima_cols = self._build_tables(
-                user_data, na_users, now)
-        except Exception as error:
-            err = error
-        finally:
-            self.history_manager.close_connection()
-        if err:
-            raise err
+        today_ordinal = now.toordinal()
 
-        print()
+        history_path = self.config.history_path
+        users_rima_first = sorted(setup.users, key=lambda u: (u != setup.rima, u))
 
+        clean_table_names = [n.removesuffix('-diff') for n in table_names]
+        categories = [
+            c.category for c in HistoryManager.CATEGORIES
+            if c.table_name in clean_table_names
+            ]
+
+        with HistoryManager(history_path) as history:
+            cat_data, user_history_time = (
+                self._source_user_data(history, now, setup, categories))
+
+            user_id_dict = history.get_user_id_dict()
+
+            label_dict = history.get_label_dict(
+                users_rima_first, today_ordinal, categories)
+
+        tables = []
+        for name in table_names:
+            table_name = name
+            is_diff = False
+            if name.endswith('-diff'):
+                table_name = name.removesuffix('-diff')
+                is_diff = True
+            table = self._generate_table(
+                table_name, is_diff, setup, cat_data, label_dict, user_id_dict,
+                today_ordinal
+                )
+            tables.append(table)
+
+        click.echo()
         dl_success = self._download_success_users
-        user_map = self._user_orig.get
+        user_map = setup.user_orig.get
         if len(dl_success):
-            print(
+            click.echo(
                 'Downloaded: '
                 + ', '.join(map(user_map, dl_success)) + '\n'
                 )
@@ -90,432 +85,493 @@ class Renderer(RimadiffCommon):
         if len(dl_fail):
             self.error(
                 'Could not download: ' + ', '.join(map(user_map, dl_fail)))
+
         dl_errors = self._download_fail_errors
         if dl_errors.total():
             for text, count in dl_errors.items():
                 count_text = f'[{count}x] ' if count > 1 else ''
-                print(f'{count_text}{text}')
-            print()
+                self.error(f'{count_text}{text}')
+            click.echo()
+
         json_fail = self._bad_json_users
         if len(json_fail):
             self.error('Bad API JSON: ' + ', '.join(map(user_map, json_fail)))
+
         if len(self._wrong_user_data):
             self.error(
                 'API returned data for wrong users, snapshots not saved in '
                 'history:'
                 )
             for user, user_response in self._wrong_user_data:
-                print(f'  Requested {user_map(user)}, got {user_response}')
-            print()
+                click.echo(f'  Requested {user_map(user)}, got {user_response}')
+            click.echo()
 
         if len(user_history_time):
-            print('Fetched at', end='')
-            if len(set(user_history_time.values())) == 1:
+            fetch_text = 'Fetched at'
+            time_set = set(user_history_time.values())
+            if len(time_set) == 1:
                 time, timezone = next(iter(user_history_time.values()))
-                print(f' {time} {timezone}\n')
+                fetch_text += f' {time} {timezone}'
             else:
-                is_variable_tz = len(
-                    set(t[1] for t in user_history_time.values())
-                    ) > 1
-                _, timezone = next(iter(user_history_time.values()))
-                print(('' if is_variable_tz else f' ({timezone})'))
-                sorted_items = sorted(
-                    user_history_time.items(), key=lambda item: item[1][0])
-                for user, (time, timezone) in sorted_items:
-                    print(
-                        time + (f' ({timezone})' if is_variable_tz else '')
-                        + f' {user_map(user)}'
+                time_order = sorted(time_set)
+                tz_set = {t[1] for t in time_set}
+                if len(tz_set) == 1:
+                    fetch_text += f' ({next(iter(tz_set))})'
+                for time_tuple in time_order:
+                    time, tz = time_tuple
+                    tz_str = ('' if len(tz_set) == 1 else f' {tz}')
+                    users = [
+                        u for u, t in user_history_time.items()
+                        if t == time_tuple
+                        ]
+                    fetch_text += (
+                        f'\n  {time}{tz_str} '
+                        + ', '.join(setup.user_orig[u] for u in users)
                         )
-                print()
+            click.echo(fetch_text + '\n')
 
-        self._add_combat_level(category_tables[0])
-        print_tables = []
-        if show_table['skill']:
-            print_tables.append((
-                category_tables[0], rima_cols[0], False, False))
-        if show_table['xp']:
-            print_tables.append((
-                category_tables[1], rima_cols[1], False, False))
-        if show_table['skill-rank']:
-            print_tables.append((
-                category_tables[2], rima_cols[2], False, True))
-        if show_table['activity']:
-            print_tables.append((
-                category_tables[3], rima_cols[3], True, False))
-        if show_table['activity-rank']:
-            print_tables.append((
-                category_tables[4], rima_cols[4], True, True))
-        for table, rima_col_i, hide_if_zero, comp_rank in print_tables:
-            self._print_user_compare_table(
-                table, hide_if_zero, comp_rank, rima_col_i)
+        numeric_errs = (
+            (self._non_numeric_categories, 'numeric'),
+            (self._non_int_categories, 'integer')
+            )
+        for num_dict, label in numeric_errs:
+            if len(num_dict) == 0:
+                continue
+            self.warning(f'The API returned non-{label} datapoints for:')
+            cat_header = {c.category: c.header for c in HistoryManager.CATEGORIES}
+            for category, value_counter in num_dict.items():
+                vals = ', '.join(
+                    repr(val) + ('' if count == 1 else f' (x{count})')
+                    for val, count in value_counter.items()
+                    )
+                click.echo(f'  {cat_header[category]}: {vals}')
 
+        for table in tables:
+            lines = table.render_lines()
+            for line in lines:
+                click.echo(line)
+            click.echo()
 
-    def _source_user_data(self, now):
-        # user_data[user_id][category][label_id] = value
-        user_data = {}
-        na_users = set() # Data not available
+        RimadiffCommon.print_colour_warnings()
+
+    def _validate_rima(self, setup, table_names):
+        no_rima = not setup.rima
+        invalid_rima = setup.rima not in setup.users
+        if no_rima or invalid_rima:
+            # Complain about RIMA
+            prolog = ''
+            has_diff_tables = any(n.endswith('-diff') for n in table_names)
+            if has_diff_tables:
+                prolog = 'Cannot calculate differences, '
+            epilog = ('set' if no_rima else f'a user ({setup.rima_orig})')
+            if has_diff_tables or (invalid_rima and not no_rima):
+                self.warning(f'{prolog}RIMA is not {epilog}.')
+                for i in range(len(table_names)):
+                    table_names[i] = table_names[i].removesuffix('-diff')
+
+    def _source_user_data(self, history, now, setup, categories):
+        # cat_data[category][user_id][label_id] = value
+        cat_data = {n: {} for n in categories}
 
         today_ordinal = now.toordinal()
         now_time = now.strftime('%H:%M')
         now_timezone = now.strftime('%z')
-        db_users, new_users = self.history_manager.sort_users(
-            set(self._users))
+        time_tuple = today_ordinal, now_time, now_timezone
 
-        def push_to_dict(data, user, user_id):
-            if data is None:
-                na_users.add(user)
-            else:
-                user_data[user_id] = data
+        db_users, new_users = history.sort_users(set(setup.users))
 
+        # Read data for today from history database
+        user_db_data = {}
         user_history_time = {}
-        with requests.Session() as session:
-            for user_id, user in db_users:
-                data = None
-                if not self._force_download:
-                    data, time, timezone = self.history_manager.read_data(
-                        today_ordinal, user_id)
-                    if time is not None:
-                        user_history_time[user] = time, timezone
-                if data is None:
-                    r = self._download_data(user, session)
-                    data, category_labels, url, skip_write = r
+        # user_db_data[user_id][category][label_id] = value
+        # user_history_time[user_id] = (time, timezone)
+        if not self._force_download:
+            user_ids = [t[0] for t in db_users]
+            user_db_data, user_history_time = history.read_data(
+                today_ordinal, user_ids, categories)
 
-                    if data is not None and not skip_write:
-                        self.history_manager.write_data(
-                            today_ordinal, user_id, data, category_labels,
-                            now_time, now_timezone, url
-                            )
-                        user_original = self._user_orig[user]
-                        self.history_manager.update_user_original(
-                            user_id, user_original)
-                push_to_dict(data, user, user_id)
+        sourced: list[APIResponse] = []
+        with requests.Session() as session:
+            ctx = session, history # Context managers
+
+            for user_id, user in db_users:
+                user_tuple = user, user_id, setup
+                db_data = user_db_data.get(user_id)
+
+                self._source_existing_user(db_data, user_tuple, ctx, sourced)
 
             for user in new_users:
-                r = self._download_data(user, session)
-                data, category_labels, url, skip_write = r
+                self._source_new_user(user, setup, today_ordinal, ctx, sourced)
 
-                user_id = None
-                if data is not None and not skip_write:
-                    user_original = self._user_orig[user]
-                    user_id = self.history_manager.add_user(
-                        user, user_original)
-                    self.history_manager.write_data(
-                        today_ordinal, user_id, data, category_labels,
-                        now_time, now_timezone, url
-                        )
-                push_to_dict(data, user, user_id)
-        return user_data, na_users, user_history_time
+        # Add only requested table categories to cat_data, including db
+        # pseudo-responses
+        for resp in sourced:
+            for category in categories:
+                cat_data[category][resp.user_id] = resp.data[category]
 
-    def _build_tables(self, user_data, na_users, now):
-        # label_id_rows[category] = [label_id, label_id, ...]
-        category_stop = len(Renderer.CATEGORY_HEADERS)
-        label_id_row_sets = [set() for _ in range(category_stop)]
-        for data in user_data.values():
-            for category, label_values in enumerate(data):
-                label_id_row_sets[category].update(range(len(label_values)))
-        label_id_rows = [sorted(label_ids) for label_ids in label_id_row_sets]
+        # Write new data to database
+        downloaded = [r for r in sourced if r.url]
+        if downloaded:
+            history.write_data(time_tuple, downloaded)
 
-        user_column_headers = []
-        rima_cols = []
-        rima_col_i = -1
-        for user_i, user in enumerate(self._users):
-            col_header = self._user_orig[user]
+        return cat_data, user_history_time
 
-            # Nayta dorkalle RIMA
-            if user == self._rima:
-                col_header = 'RIMA'
-                rima_col_i = user_i + 1
+    def _source_existing_user(self, db_data, user_tuple, ctx, sourced):
+        user, user_id, setup  = user_tuple
+        session, history = ctx
 
-            elif user in self._user_alias:
-                col_header = self._user_alias[user]
+        user_original = setup.user_orig[user]
+        history.update_user_original(user_id, user_original)
 
-            user_column_headers.append(col_header)
-        rima_cols = [rima_col_i] * category_stop
+        labels = None
+        if db_data:
+            # Package in pseudo-response
+            resp = APIResponse(db_data, labels={}, url=None, user_id=user_id)
+        else:
+            resp = self._download_data(user, setup, session)
+            if not resp:
+                return
 
-        category_tables = []
-        user_id_dict = self.history_manager.get_user_id_dict()
-        today_ordinal = now.toordinal()
-        for category in range(category_stop):
-            header_row = [
-                Renderer.CATEGORY_HEADERS[category], *user_column_headers]
-            table = [header_row]
-            for label_id in label_id_rows[category]:
-                for user in self._users:
-                    user_id = user_id_dict[user]
-                    label = self.history_manager.get_label(
-                        category, label_id, today_ordinal, user_id)
-                    if label is not None:
-                        break
-                row = [label]
-                for user in self._users:
-                    value = '-'
-                    if user in na_users:
-                        value = 'n/a'
-                    else:
-                        user_id = user_id_dict[user]
-                        try:
-                            value = user_data[user_id][category][label_id]
-                        except (IndexError, KeyError):
-                            pass
-                    if value == -1:
-                        value = '-'
-                    row.append(value)
-                table.append(row)
-            category_tables.append(table)
+        resp.user_id = user_id
+        sourced.append(resp)
 
-        return category_tables, rima_cols
+    def _source_new_user(self, user, setup, today_ordinal, ctx, sourced):
+        session, history = ctx
 
-    def _download_data(self, user, session):
-        data = None
-        category_labels = None
-        user_original = self._user_orig[user]
+        resp = self._download_data(user, setup, session)
+        if not resp:
+            return
+
+        user_original = setup.user_orig[user]
+        resp.user_id = history.add_user(user, user_original, today_ordinal)
+
+        sourced.append(resp)
+
+    def _download_data(self, user, setup, session):
+        # data   [category] [label_id] = value
+        # labels [category] [label_id] = label
+
+        user_original = setup.user_orig[user]
         quoted_user = urllib.parse.quote(user_original, safe='')
         url = self.config.api_url.format(quoted_user)
+
         resp = None
         try:
-            resp = session.get(url)
-            resp.raise_for_status()
+            r = session.get(url)
+            r.raise_for_status()
         except requests.RequestException as err:
             self._download_fail_users.append(user)
             err_str = f'{type(err).__name__}: {err}'
             self._download_fail_errors[err_str] += 1
-            resp = None
-
-        skip_write = False
-        if resp:
+        else:
             self._download_success_users.append(user)
-            obj = resp.json()
-            data, category_labels, user_response = (
-                self._response_json_to_data(obj))
+            obj = r.json()
+            data, labels, user_response = self._response_json_to_data(obj)
             if data is None:
                 self._bad_json_users.append(user)
             elif user != user_response.lower():
-                self._wrong_user_data.append((user, user_response))
-                skip_write = True
-        return data, category_labels, url, skip_write
+                self._wrong_user_data.append((user_original, user_response))
+            else:
+                resp = APIResponse(data, labels, url)
+
+        return resp
 
     def _response_json_to_data(self, obj):
-        user_response = obj['name']
+        # data   [category] [label_id] = value
+        # labels [category] [label_id] = label
 
-        # data[category][label_id] = value
-        # category_labels[category][label_id] = label
-        if (not isinstance(obj.get('skills'), list)
-            or not isinstance(obj.get('activities'), list)):
-            return None, None
-        skills_fields = ['level', 'xp', 'rank']
-        skills_max_id = max(entry['id'] for entry in obj['skills'])
-        skills_empty = [None] * (skills_max_id + 1)
-        skills_categories = [skills_empty.copy() for _ in skills_fields]
-        skills_category_labels = [skills_empty.copy() for _ in skills_fields]
-        for entry in obj['skills']:
-            for field_i, field in enumerate(skills_fields):
-                id_ = entry['id']
-                skills_categories[field_i][id_] = entry[field]
-                skills_category_labels[field_i][id_] = entry['name']
+        user_response = str(obj.get('name')).strip()
+        skills = obj.get('skills')
+        activities = obj.get('activities')
 
-        activity_fields = ['score', 'rank']
-        activity_max_id = max(entry['id'] for entry in obj['activities'])
-        activity_empty = [None] * (activity_max_id + 1)
-        activity_categories = [activity_empty.copy() for _ in activity_fields]
-        activity_category_labels = [
-            activity_empty.copy() for _ in activity_fields]
-        for entry in obj['activities']:
-            for field_i, field in enumerate(activity_fields):
-                id_ = entry['id']
-                activity_categories[field_i][id_] = entry[field]
-                activity_category_labels[field_i][id_] = entry['name']
+        not_list = lambda v: not isinstance(v, list)
 
-        data = [*skills_categories, *activity_categories]
-        category_labels = [*skills_category_labels, *activity_category_labels]
-        return data, category_labels, user_response
+        if not_list(skills) or not_list(activities):
+            return None, None, None
 
-    def _add_combat_level(self, table_skill_level):
-        combat_row = ['Combat']
-        for col_i in range(1, len(table_skill_level[0])):
-            levels = {
-                row[0]: row[col_i]
-                for row in table_skill_level[1:]
-                }
-            combat_level = self._get_combat_level(levels)
-            combat_row.append(combat_level)
-        table_skill_level.insert(2, combat_row)
+        data = {c.category: {} for c in HistoryManager.CATEGORIES}
+        labels = copy.deepcopy(data)
 
-    def _get_combat_level(self, levels):
-        base = (
-            0.25
-            * (levels['Defence'] + levels['Hitpoints'] + levels['Prayer']//2)
+        sk_field_table = {
+            'level': 'skill',
+            'xp':    'xp',
+            'rank':  'skill-rank'
+            }
+        self._add_json_portion(skills, sk_field_table, data, labels)
+
+        act_field_table = {
+            'score': 'activity',
+            'rank':  'activity-rank'
+            }
+        self._add_json_portion(activities, act_field_table, data, labels)
+
+        return data, labels, user_response
+
+    def _add_json_portion(self, obj, field_table, data, labels):
+        field_category = {}
+        db_cat = HistoryManager.CATEGORIES
+        for field, table_name in field_table.items():
+            field_category[field] = next(
+                c.category for c in db_cat if c.table_name == table_name)
+
+        for entry in obj:
+            id_ = entry['id']
+            for field in field_table:
+                category = field_category[field]
+
+                val = entry[field]
+                if not isinstance(val, Number):
+                    self._record_numeric_data_type_error(category, field, val)
+                elif not isinstance(val, int):
+                    self._record_numeric_data_type_error(
+                        category, field, val, True)
+                data[category][id_] = val
+
+                labels[category][id_] = str(entry['name']).strip()
+
+    def _record_numeric_data_type_error(self, category, field, val, for_int=False):
+        err_dict = self._non_numeric_categories
+        if for_int:
+            err_dict = self._non_int_categories
+        err_dict.setdefault(category, Counter())
+        err_dict[category][val] += 1
+
+    def _generate_table(
+        self, table_name, is_diff, setup, cat_data, label_dict, user_id_dict,
+        today_ordinal
+    ):
+        # cat_data   [category] [user_id] [label_id] = value
+        # label_dict [category]           [label_id] = label
+
+        cat = next(c for c in HistoryManager.CATEGORIES if c.table_name == table_name)
+        user_data = cat_data[cat.category]
+        label_value = label_dict[cat.category]
+        # user_data   [user_id] [label_id] = value
+        # label_value           [label_id] = label
+        is_rank = ('-rank' in table_name)
+
+        label_id_set = set()
+        for lab_dict in user_data.values():
+            label_id_set |= set(lab_dict.keys())
+        label_ids = sorted(label_id_set)
+
+        rima_col_i = -1
+        user_headers = []
+        for user_i, user in enumerate(setup.users):
+            if user == setup.rima:
+                # Nayta dorkalle RIMA
+                header = 'RIMA'
+                rima_col_i = user_i + 1
+            else:
+                header = setup.user_alias.get(user)
+                if not header:
+                    header = setup.user_orig[user]
+            user_headers.append(header)
+        headers = [cat.header, *user_headers]
+
+        header_row = [TableCell(t) for t in headers]
+        table = Table(
+            table_name, 'data-table', header_row, has_row_headers=True)
+        table.styled_column[rima_col_i] = 'rima'
+
+        for row_num, label_id in enumerate(label_ids):
+            # Add combat row
+            if table_name == 'skill' and row_num == 1:
+                combat_row = self._get_combat_row(
+                    user_data, label_value, setup.users)
+                self._diff_format_row(combat_row, rima_col_i, is_rank, is_diff)
+                table.add_row(combat_row)
+                table.styled_row[2] = 'combat'
+
+            label = label_value[label_id]
+            row = [TableCell(label)]
+            all_zeroes = True
+            for user in setup.users:
+                value = 'n/a'
+                user_id = user_id_dict[user]
+                try:
+                    value = user_data[user_id][label_id]
+                except KeyError:
+                    pass
+                else:
+                    if value not in (0, -1):
+                        all_zeroes = False
+
+                if is_rank and value == -1:
+                    value = text = '-'
+                elif isinstance(value, Number):
+                    text = self._format_numeric(value)
+                else:
+                    text = str(value)
+                row.append(TableCell(text, value))
+
+            if 'activity' in table_name and all_zeroes:
+                continue
+
+            self._diff_format_row(row, rima_col_i, is_rank, is_diff)
+            table.add_row(row)
+
+        return table
+
+    def _get_combat_row(self, user_data, label_value, users):
+        # user_data   [user_id] [label_id] = value
+        # label_value           [label_id] = label
+
+        skill_names = (
+            'attack', 'strength', 'defence', 'prayer', 'magic', 'ranged',
+            'hitpoints'
             )
-        melee = levels['Attack'] + levels['Strength']
-        ranged = levels['Ranged'] * 3 // 2
-        mage = levels['Magic'] * 3 // 2
+        SkillTuple = namedtuple('SkillTuple', skill_names)
+
+        skill_ids = tuple(
+            next(
+                (i for i, v in label_value.items() if str(v).strip().lower() == s),
+                None)
+            for s in skill_names
+            )
+
+        cell_values = ['Combat']
+        for user_i, user in enumerate(users):
+            skill_values = user_data[user_i]
+            levels = SkillTuple(*(skill_values.get(id_) for id_ in skill_ids))
+            combat_level = self._get_combat_level(levels)
+            cell_values.append(combat_level)
+        combat_row = [TableCell(v) for v in cell_values]
+        return combat_row
+
+    def _get_combat_level(self, lvl):
+        if any(not isinstance(s, Number) for s in lvl):
+            return 'n/a'
+        base = 0.25 * (lvl.defence + lvl.hitpoints + lvl.prayer//2)
+        melee = lvl.attack + lvl.strength
+        ranged = lvl.ranged * 3 // 2
+        mage = lvl.magic * 3 // 2
         combat_level = math.floor(base + 0.325 * max(melee, ranged, mage))
         return combat_level
 
-    def _print_user_compare_table(
-        self, raw_table, hide_if_zero, comp_rank, rima_col_i
-    ):
-        table = []
-        for row_i, raw_row in enumerate(raw_table):
-            if hide_if_zero and all(v == 0 or v == '-' for v in raw_row[1:]):
+    def _diff_format_row(self, row, rima_col_i, is_rank, is_diff):
+        if rima_col_i == -1:
+            return
+
+        rima_val = row[rima_col_i].value
+        for col_i in range(1, len(row)):
+            if col_i == rima_col_i:
                 continue
+            cell = row[col_i]
 
-            rima_val = None
-            if rima_col_i != -1:
-                rima_val = raw_row[rima_col_i]
-            row = []
-            for col_i, value in enumerate(raw_row):
-                text = str(value)
-                if isinstance(value, Number):
-                    if (rima_col_i != -1 and self._show_difference
-                        and col_i != rima_col_i):
-                        # Calculate diff column
-                        text, value = self._get_diff_text(value, rima_val)
-                    else:
-                        text = self._format_numeric(value)
+            self._judge_colour(cell, rima_val, is_rank)
 
-                cell = TableCell(text, value, row_i, col_i)
-                row.append(cell)
-            table.append(row)
+            if is_diff:
+                self._apply_diff_to_cell(cell, rima_val)
 
-        for row_i, row in enumerate(table):
-            row_bg = ('black' if row_i % 2 == 0 else 'darkgray')
-            for cell in row:
-                cell.bg = row_bg
-                if rima_col_i != -1:
-                    rima_val = row[rima_col_i].value
-                    self._color_user_compare_cell(
-                        cell, rima_val, rima_col_i, comp_rank)
+    def _judge_colour(self, cell, rima_val, is_rank):
+        is_available = isinstance(cell.value, Number)
+        rima_available = isinstance(rima_val, Number)
 
-        self._print_table(table)
+        # Classify colours
+        judgement = None
+        if is_rank and is_available and not rima_available:
+            judgement = 'good'
+        elif is_rank and not is_available and rima_available:
+            judgement = 'bad'
+        elif is_available and rima_available:
+            val_a = cell.value
+            val_b = rima_val
+            if is_rank:
+                val_a, val_b = val_b, val_a
+            if val_a > val_b:
+                judgement = 'good'
+            elif val_a < val_b:
+                judgement = 'bad'
+        if judgement:
+            # JUDGE !
+            cell.style_classes.append(judgement)
 
-    def _get_diff_text(self, value, rima_val):
-        if isinstance(rima_val, Number):
-            value = value - rima_val
-            text = self._format_numeric(value, show_plus=True)
-        else:
-            value = 0
-            text = 'n/a'
-        return text, value
+    def _apply_diff_to_cell(self, cell, rima_val):
+        is_available = isinstance(cell.value, Number)
+        rima_available = isinstance(rima_val, Number)
+
+        if is_available and rima_available:
+            cell.value = cell.value - rima_val
+            cell.text = self._format_numeric(cell.value, show_plus=True)
+        elif is_available:
+            cell.value = 0
+            cell.text = 'n/a'
 
     def _format_numeric(self, value, show_plus=False):
         sign = ('+' if show_plus and value > 0 else '')
         text = f'{value:{sign},}'.replace(',', ' ')
         return text
 
-    def _color_user_compare_cell(self, cell, rima_val, rima_col_i, comp_rank):
-        # Highlight RIMA
-        if cell.col_i == rima_col_i:
-            cell.bold = True
-            if cell.is_column_header:
-                cell.bg = 'orange'
-            else:
-                cell.fg = 'orange'
-            return
-
-        if cell.is_column_header or cell.is_row_header:
-            cell.bold = True
-            return
-
-        is_available = isinstance(cell.value, Number)
-        rima_available = isinstance(rima_val, Number)
-        show_diff = self._show_difference
-
-        if comp_rank and is_available and not rima_available:
-            cell.fg = 'green'
-        elif comp_rank and not is_available and rima_available:
-            cell.fg = 'red'
-        elif is_available and rima_available:
-            val_a = cell.value
-            val_b = (0 if show_diff else rima_val)
-            if comp_rank:
-                val_a, val_b = val_b, val_a
-            if val_a > val_b:
-                cell.fg = 'green'
-            elif val_a < val_b:
-                cell.fg = 'red'
-
-    def _print_table(self, table):
-        lens = [max(map(len, column)) for column in zip(*table)]
-        for row in table:
-            for cell in row:
-                cell.width = lens[cell.col_i]
-                cell.print()
-            # Reset colors at the end of row
-            print(self.term_color())
-        print()
-
     def list_history(self):
         snapshots = None
-        if self.history_manager.history_exists():
-            self.history_manager.open_connection()
-            snapshots = self.history_manager.get_history_snapshots()
-            self.history_manager.close_connection()
+        history_path = self.config.history_path
+        if history_path.exists():
+            with HistoryManager(history_path) as history:
+                snapshots = history.get_history_snapshots()
         else:
-            print(
+            self.warning(
                 '\nHistory database does not exist.\n\n'
-                f'Path: {self.history_manager.db_path}\n'
+                f'Path: {history_path}'
                 )
             return
 
-        headers = ['Num', 'Time']
-        align = ['right', 'center']
-        table = [[TableCell(h, h, 0, i, align[i], bold=True) for i, h in enumerate(headers)]]
-        for snapshot_i, (date_ordinal, time, timezone) in enumerate(snapshots):
+        header = ['Num', 'Date', 'Time', 'Timezone']
+        align = ['right', 'center', 'left', 'left']
+        header_row = [TableCell(t) for t in header]
+        table = Table('history', 'info-table', header_row, align)
+
+        for snapshot_i, (date_ordinal, time_list) in enumerate(snapshots):
             date_obj = date.fromordinal(date_ordinal)
+            date_str = f'{date_obj}'
             num = len(snapshots) - snapshot_i
-            time = f'{date_obj} {time} {timezone}'
-            text_values = [(f'{num}', num), (time, date_ordinal)]
-            row_fg = ('white' if snapshot_i % 2 == 1 else 'blue')
-            table.append([
-                TableCell(text, value, snapshot_i, i, align[i], fg=row_fg)
-                for i, (text, value) in enumerate(text_values)
-                ])
-        print()
-        self._print_table(table)
+            time = ', '.join(t[0] for t in time_list)
+            tz = ', '.join({t[1]: 0 for t in time_list})
+
+            row_values = [(num,), (date_str, date_ordinal), (time,), (tz,)]
+            row = [TableCell(*a) for a in row_values]
+            table.add_row(row)
+
+        click.echo()
+        table.echo()
 
     def list_users(self, setup_name):
         counts = latest_snapshot = None
-        if self.history_manager.history_exists():
-            self.history_manager.open_connection()
-            counts, latest_snapshot = self.history_manager.get_info_users()
-            self.history_manager.close_connection()
-        # counts: U.name_original, U.name, Count(R.date_ordinal)
-        # latest_snapshot: U.name, R2.date_ordinal, R2.time, R2.timezone
 
+        history_path = self.config.history_path
         setup = self.config.get_user_setup(setup_name)
-        users = setup.users
+        user_set = set(setup.users) # Config
         user_orig = setup.user_orig.copy()
-        user_alias = setup.user_alias
-        user_alias_lc = {n.lower(): a for n, a in user_alias.items()}
-        rima_lc = setup.rima
 
-        user_set = set(users) # Config
-        if counts is not None: # History database
+        if history_path.exists():
+            with HistoryManager(history_path) as history:
+                counts, latest_snapshot = history.get_info_users()
+
+            # counts: U.name, U.name_original, Count(R.date_ordinal)
+            # latest_snapshot: U.name, R2.date_ordinal, R2.time, R2.timezone
+
             user_set |= (
-                {r[1] for r in counts} | {r[0] for r in latest_snapshot})
+                {r[0] for r in counts} | {r[0] for r in latest_snapshot})
 
-        # If both database and config aliases, show config aliases
-        if counts is not None:
-            user_orig |= {r[1]: r[0] for r in counts if r[1] not in user_orig}
+            # If both database and config aliases, show config aliases
+            user_orig |= {r[0]: r[1] for r in counts if r[0] not in user_orig}
 
         header = ['Name', 'Alias', 'RIMA', 'Snapshots', 'Latest snapshot']
-        align = ['left', 'left', 'center', 'right', 'center']
-        table = [[
-            TableCell(h, h, 0, i, align[i], bold=True)
-            for i, h in enumerate(header)
-            ]]
+        align = ['left', 'left', 'left', 'right', 'center']
+        header_row = [TableCell(t) for t in header]
+        table = Table('user', 'info-table', header_row, align)
 
         tz_set = set()
         if latest_snapshot is not None:
             tz_set = {t[3] for t in latest_snapshot}
         same_tz = (len(tz_set) == 1)
-        for row_i, user_lc in enumerate(sorted(user_set)):
+        for row_i, user in enumerate(sorted(user_set)):
             snapshots = latest_date = '-'
             date_ordinal = -1
             if counts is not None:
-                count_row = next(r for r in counts if r[1] == user_lc)
+                count_row = next(r for r in counts if r[0] == user)
                 snapshot_row = next(
-                    r for r in latest_snapshot if r[0] == user_lc)
+                    r for r in latest_snapshot if r[0] == user)
 
                 snapshots = count_row[2]
                 _, date_ordinal, time, timezone = snapshot_row
@@ -525,56 +581,55 @@ class Renderer(RimadiffCommon):
                     latest_date = (
                         f'{date.fromordinal(date_ordinal)} {time}{tz_part}')
 
-            user = user_orig[user_lc]
-            alias = user_alias.get(user_lc, '-')
-            is_rima = ('X' if user_lc == rima_lc else '')
-            text_values = [
-                (user, user),
-                (alias, alias),
-                (is_rima, is_rima),
-                (str(snapshots), snapshots),
+            user_original = user_orig[user]
+            alias = setup.user_alias.get(user, '-')
+            is_rima = ('X' if user == setup.rima else '')
+            row_values = [
+                (user_original,),
+                (alias,),
+                (is_rima,),
+                (snapshots,),
                 (latest_date, date_ordinal),
                 ]
-            row_fg = ('white' if row_i % 2 == 1 else 'blue')
-            row = [
-                TableCell(text, value, row_i, i, align[i], fg=row_fg)
-                for i, (text, value) in enumerate(text_values)
-                ]
-            table.append(row)
-        print()
-        self._print_table(table)
+            row = [TableCell(*a) for a in row_values]
+            table.add_row(row)
+
+        click.echo()
+        table.echo()
+
         tz_info = ''
         if same_tz:
             tz_info = f' Timezone {next(iter(tz_set))}.'
-        print(f'Aliases and RIMA from user setup "{setup_name}".{tz_info}\n')
+        click.echo(
+            f'Aliases and RIMA from user setup "{setup_name}".{tz_info}\n')
 
     def list_paths(self):
-        align = ['left', 'left', 'left', 'right', 'center']
-        header = ['Name', 'Path', 'Source', 'Size', 'Modified']
+        paths = [
+            ['General config', self.config.path, '', False],
+            ['Colour config', self.config.colour_path, '', False],
+            ['History database', self.config.history_path, '',
+                self.config.history_path_from_config]
+            ]
+
+        # List path information
+        align = ['left', 'left', 'right', 'center']
+        header = ['Name', 'Source', 'Size', 'Modified']
         time_fmt = '%Y-%m-%d %H:%M'
 
-        table = [[
-            TableCell(h, h, 0, i, align[i], bold=True)
-            for i, h in enumerate(header)
-            ]]
-        paths = [
-            ('Configuration', self.config.path, False),
-            ('History database', self.config.history_path,
-                self.config.history_path_from_config)
-            ]
-        hyphen_desc = False
+        header_row = [TableCell(t) for t in header]
+        info_table = Table('path-info', 'info-table', header_row, align)
         errs = []
-        for row_i, (name, path, from_config) in enumerate(paths):
-            row_fg = ('white' if row_i % 2 == 1 else 'blue')
-
+        for entry in paths:
+            from_config = entry[3]
             source = ('Config' if from_config else '-')
             size = '<err>'
             modified = '<err>'
+            path = entry[1]
             try:
                 st = path.stat()
             except FileNotFoundError:
                 size = modified = '-'
-                hyphen_desc = True
+                entry[2] = ' (does not exist)'
             except OSError as err:
                 errs.append(str(err))
             else:
@@ -582,23 +637,29 @@ class Renderer(RimadiffCommon):
                 mod_dt = datetime.fromtimestamp(st.st_mtime)
                 modified = mod_dt.strftime(time_fmt)
 
-            row = (name, str(path), source, size, modified)
-            table.append([
-                TableCell(t, t, row_i, i, align[i], fg=row_fg)
-                for i, t in enumerate(row)
-                ])
+            name = entry[0]
+            row_values = [name, source, size, modified]
+            row = [TableCell(t) for t in row_values]
+            info_table.add_row(row)
 
-        print()
+        click.echo()
         if errs:
             self.error('\n'.join(errs))
+        info_table.echo()
 
-        self._print_table(table)
+        # List actual paths
+        align = ['left', 'left']
+        header = ['Name', 'Path']
+
+        header_row = [TableCell(t) for t in header]
+        path_table = Table('path', 'info-table', header_row, align)
+        for name, path, exist, _ in paths:
+            row = [TableCell(v) for v in (name, f'{path}{exist}')]
+            path_table.add_row(row)
+        path_table.echo()
 
         tz = datetime.now().astimezone().strftime('%z')
-        hyphen_info = ''
-        if hyphen_desc:
-            hyphen_info = 'Hyphen in Size means the file does not exist. '
-        print(f'{hyphen_info}Timezone {tz}.\n')
+        click.echo(f'Timezone {tz}.\n')
 
     def _size_format(self, size):
         if size/10 > 1024**3:

@@ -1,42 +1,29 @@
+import click
+
 from rimadiff.rimadiff_common import RimadiffCommon
+
+NOT_SET = object()
 
 
 class TableCell(RimadiffCommon):
     ALIGN = {'right': '>', 'left': '<', 'center': '^'}
 
-    def __init__(
-        self, text, value, row_i, col_i, align='right', bg='black', fg='white',
-        bold=False
-    ):
-        self.text = text
-        self.value = value
-        self.row_i = row_i
-        self.col_i = col_i
-        self.align = align
-        self.bg = bg
-        self.fg = fg
-        self.bold = bold
-
-        self.width = -1
+    def __init__(self, text, value=NOT_SET):
+        self.text = str(text)
+        if value is NOT_SET:
+            self.value = text
+        else:
+            self.value = value
+        self.style_classes = []
 
     def __str__(self):
         return self.text
 
-    def __len__(self):
-        return len(self.text)
+    def get_coloured(self, table_type, width, align_name, style_classes):
+        align = TableCell.ALIGN[align_name]
+        sdict = self.get_style(table_type, 'default') or {}
+        for name in (style_classes + self.style_classes):
+            sdict |= self.get_style(table_type, name) or {}
 
-    @property
-    def is_column_header(self):
-        return self.row_i == 0
-
-    @property
-    def is_row_header(self):
-        return self.col_i == 0
-
-    def print(self):
-        color_def = self.term_color(self.bg, self.bold, self.fg)
-        align = TableCell.ALIGN[self.align]
-        end = ''
-        if self.bold:
-            end = self.term_color()
-        print(f'{color_def} {self.text:{align}{self.width}} {end}', end='')
+        styled = self.click_style(f' {self.text:{align}{width}} ', sdict)
+        return styled

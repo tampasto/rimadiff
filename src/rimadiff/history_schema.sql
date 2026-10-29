@@ -1,15 +1,17 @@
 CREATE TABLE Label (
-  category INT, -- 0: Skill level, 1: Skill xp, 2: Skill rank, 3: Activity, 4: Activity rank
+  category INT, -- {category_comment}
   id INT,
   version INT,
   value TEXT NOT NULL,
+  added_date_ordinal INT NOT NULL,
   PRIMARY KEY (category, id, version)
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE User (
   id INT PRIMARY KEY,
   name TEXT NOT NULL UNIQUE, -- Always lower case
-  name_original TEXT -- Case as in config file
+  name_original TEXT, -- Case as in config file
+  added_date_ordinal INT NOT NULL
 ) STRICT, WITHOUT ROWID;
 
 CREATE TABLE UserDataRequest (

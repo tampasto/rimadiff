@@ -1,9 +1,7 @@
 from rimadiff.config_reader import ConfigReader
-from rimadiff.history_manager import HistoryManager
 from rimadiff.renderer import Renderer
 
 import click
-from click import secho
 
 
 @click.group(
@@ -16,11 +14,9 @@ from click import secho
     )
 @click.option('-f', '--force-download', is_flag=True,
     help='Do not skip downloading if done today already')
-@click.option('-d', '--difference', is_flag=True,
-    help='RIMA is absolute, others shown as arithmetic difference')
 @click.option('-t', '--table', multiple=True, help='Select tables')
 @click.pass_context
-def cli(ctx, user_setup, force_download, difference, table):
+def cli(ctx, user_setup, force_download, table):
     """
     Compare OSRS game hiscores in terminal.
 
@@ -35,6 +31,11 @@ def cli(ctx, user_setup, force_download, difference, table):
     The space after -t is optional. Long forms can be used by using the
     --table option multiple times. You cannot mix both short and long
     table names in the same invocation.
+
+    If the table name ends with "-diff" or is upper case for short
+    forms, then RIMA is absolute and other users are shown as arithmetic
+    difference. In other words, for skill levels the table names would
+    be "S" or "skill-diff".
 
     \b
     Table names:
@@ -51,13 +52,13 @@ def cli(ctx, user_setup, force_download, difference, table):
     if ctx.invoked_subcommand is not None:
         return
 
-    show_table = _parse_table_names(ctx, table)
-    if show_table is None:
+    table_names = _parse_table_names(ctx, table)
+    if table_names is None:
         ctx.exit(2)
 
     # If no tables, show skill
-    if all((not f) for f in show_table.values()):
-        show_table['skill'] = True
+    if len(table_names) == 0:
+        table_names.append('skill')
 
     config = ConfigReader()
     config.ensure_config()
@@ -71,66 +72,91 @@ def cli(ctx, user_setup, force_download, difference, table):
             )
         return
 
-    history_manager = HistoryManager(config.history_path)
-    renderer = Renderer(config, history_manager)
+    renderer = Renderer(config)
 
-    renderer.print_tables(user_setup, force_download, difference, show_table)
+    renderer.print_tables(user_setup, force_download, table_names)
 
 
-def _parse_table_names(ctx, table):
+def _parse_table_names(ctx, args):
+    if args is None:
+        return []
+
     long_name = {
         's': 'skill', 'x': 'xp', 'r': 'skill-rank',
         'a': 'activity', 'c': 'activity-rank'
         }
-    show_table = {n: False for n in long_name.values()}
-    if table is None:
-        return show_table
+    long_name_e = long_name.copy()
+    long_name_e['e'] = 'every'
+    long_name_list = list(long_name.values())
+    valid_long = long_name_list + [f'{n}-diff' for n in long_name_list]
+    valid_long_e = valid_long.copy()
+    valid_long_e += ['every', 'every-diff']
 
     msgs = []
-    if len(table) == 1 and table[0] in show_table:
-        show_table[table[0]] = True
-    elif len(table) == 1 and table[0] == 'every':
-        _flag_tables('long', table, show_table, long_name, msgs)
-    elif len(table) == 1:
-        _flag_tables('short', table[0], show_table, long_name, msgs)
-    else:
-        _flag_tables('long', table, show_table, long_name, msgs)
+    table_names = []
+    use_short = False
+    if len(args) == 1:
+        arg = args[0]
+        if arg in valid_long:
+            return [arg]
+        if arg not in ('every', 'every-diff'):
+            _flag_tables(
+                'short', arg, table_names, long_name_e, long_name_list, msgs)
+            use_short = True
+
+    if not use_short:
+        _flag_tables(
+            'long', args, table_names, valid_long_e, long_name_list, msgs)
     if msgs:
         msgs.insert(0, ctx.get_usage())
         click.echo('\n\n'.join(msgs))
         return None
-    return show_table
+    return table_names
 
 
-def _flag_tables(len_, names, show_table, long_name, msgs):
+def _flag_tables(len_, names, table_names, valid, long_name_list, msgs):
     no_table = []
     for nm in names:
-        name = (nm if len_ == 'long' else long_name.get(nm))
-        if name in show_table:
-            show_table[name] = True
-        elif name == 'every' or nm == 'e':
-            for n in show_table:
-                show_table[n] = True
+        name = nm
+        if len_ == 'short':
+            name = valid.get(nm.lower())
+            if not name:
+                no_table.append(name)
+                continue
+            if nm.upper() == nm:
+                name += '-diff'
+        elif name not in valid:
+            no_table.append(name)
+            continue
+
+        if name == 'every':
+            table_names.extend(long_name_list)
+        elif name == 'every-diff':
+            table_names.extend(f'{n}-diff' for n in long_name_list)
         else:
-            no_table.append(nm)
+            table_names.append(name)
     if no_table:
-        msgs.append(_err_format(len_, no_table, names, long_name))
+        msgs.append(_err_format(len_, no_table, names, valid))
 
 
-def _err_format(len_, no_table, orig, long_name):
-    valid = ' '.join(long_name.values())
+def _err_format(len_, no_table, orig, valid):
     if len_ == 'short':
         np = 'table argument'
         vals = repr(orig)
-        valid = ' '.join(long_name) + f'\nValid long names: {valid}'
+        valid_text += (
+            ' '.join(valid) + ' '
+            + ' '.join(c.upper() for c in valid)
+            + f'\nValid long names: ' + ' '.join(valid.values())
+            )
     else:
+        valid_text = ' '.join(valid)
         np = f'long table name'
         if len(no_table) != 1:
             np += 's'
         vals = ', '.join(repr(n) for n in no_table)
     return (
         f'Error: No such {np} {vals}.\n'
-        f'Valid {len_} names: {valid}'
+        f'Valid {len_} names: {valid_text}'
         )
 
 
@@ -141,8 +167,7 @@ def history():
     config.ensure_config()
     config.read()
 
-    history_manager = HistoryManager(config.history_path)
-    renderer = Renderer(config, history_manager)
+    renderer = Renderer(config)
     renderer.list_history()
 
 
@@ -156,8 +181,7 @@ def user(user_setup):
     config.ensure_config()
     config.read()
 
-    history_manager = HistoryManager(config.history_path)
-    renderer = Renderer(config, history_manager)
+    renderer = Renderer(config)
     renderer.list_users(user_setup)
 
 
@@ -168,6 +192,5 @@ def path():
     config.ensure_config()
     config.read()
 
-    history_manager = HistoryManager(config.history_path)
-    renderer = Renderer(config, history_manager)
+    renderer = Renderer(config)
     renderer.list_paths()

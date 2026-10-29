@@ -1,5 +1,6 @@
 # Empty curly braces are replaced with URL-encoded username
 api_url = 'https://secure.runescape.com/m=hiscore_oldschool/index_lite.json?player={}'
+colour_scheme = 'default'
 
 # You may override history database location here, tilde stands for user
 # home directory

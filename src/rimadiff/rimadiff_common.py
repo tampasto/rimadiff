@@ -1,58 +1,79 @@
+import click
+
+
 class RimadiffCommon:
-    TERMINAL_COLORS = {
-        'white': 107,
-        'black': 40,
-        'darkgray': '237',
-        'green': 42,
-        'red': 41,
-        'yellow': 103,
-        'orange': 43,
-        'blue': 104,
-    }
+    colour_scheme = None
+    _colour_warnings = set()
 
-    def term_color(self, bg=None, bold=False, fg='white'):
-        a = '\033['
-        out = a
-        a = f'm{a}'
-        if bg is None:
-            out += '0'
+    def get_style(self, type_, name, subkey=None):
+        sdict = None
+        scheme = RimadiffCommon.colour_scheme
+        if not scheme:
+            return {}
+
+        type_table = scheme.get(type_)
+        if not isinstance(type_table, dict):
+            return {}
+
+        sdict = type_table.get(name)
+        if not isinstance(sdict, dict):
+            sdict = {}
         else:
-            if bold:
-                out += f'1{a}'
+            sdict = sdict.copy()
 
-            bg_def = RimadiffCommon.TERMINAL_COLORS[bg]
-            if isinstance(bg_def, str):
-                out += f'48;5;{bg_def}{a}'
-            else:
-                out += f'{bg_def}{a}'
-
-            fg_def = RimadiffCommon.TERMINAL_COLORS[fg]
-            if isinstance(fg_def, str):
-                out += '38;5;{fg_def}'
-            else:
-                out += f'{fg_def-10}'
-        return out + 'm'
+        if subkey:
+            sk_table = type_table.get(subkey)
+            if isinstance(sk_table, dict):
+                sdict |= sk_table
+        return sdict
 
     def error(self, msg_err, extra=''):
         msg = str(msg_err)
         if isinstance(msg_err, Exception):
             msg = f'{type(msg_err).__name__}: {msg_err}'
-        print(
-            self.term_color('black', fg='red') + msg + self.term_color() + '\n'
-            )
+
+        sdict = self.get_style('message', 'error')
+        styled = self.click_style(f'{msg}\n', sdict)
+        click.echo(styled)
+
         if extra:
-            print(f'{extra}\n')
+            click.echo(f'{extra}\n')
 
     def quit_error(self, msg_err, extra=''):
-        print()
+        click.echo()
         self.error(msg_err, extra)
         quit()
 
     def warning(self, msg):
-        print(
-            self.term_color('black', fg='yellow') + str(msg) + self.term_color()
-            + '\n'
-            )
+        sdict = self.get_style('message', 'warning')
+        styled = self.click_style(f'{msg}\n', sdict)
+        click.echo(styled)
+
+    def info(self, msg):
+        sdict = self.get_style('message', 'info')
+        styled = self.click_style(f'{msg}\n', sdict)
+        click.echo(styled)
+
+    def click_style(self, text, sdict):
+        styled = text
+        try:
+            styled = click.style(styled, **sdict)
+        except (ValueError, TypeError) as err:
+            msg = str(err)
+            if type(err) == TypeError:
+                msg = msg.replace('style() got a', 'A')
+                msg = msg.replace('keyword argument', 'style specifier')
+            RimadiffCommon._colour_warnings.add(msg)
+        return styled
+
+    @classmethod
+    def print_colour_warnings(cls):
+        if cls._colour_warnings:
+            pl = ('' if len(cls._colour_warnings) == 1 else 's')
+            click.echo(f'Error{pl} in colour configuration:')
+            for text in sorted(cls._colour_warnings):
+                click.echo(f'  {text}')
+            click.echo()
 
     def __repr__(self):
         class_name = type(self).__name__

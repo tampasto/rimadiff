@@ -4,7 +4,6 @@ This document describes the progress of future feature development.
 
 ### Backlog
 
-- [ ] Multi-platform color support from library  
 - [ ] History snapshot comparisons  
 - [ ] Write tests  
   - [ ] SQLite operations in HistoryManager  
@@ -18,4 +17,6 @@ This document describes the progress of future feature development.
 ### In progress
 
 ### Done
+
+- [x] Multi-platform colour support from library (multi-platform unnecessary)  
 
