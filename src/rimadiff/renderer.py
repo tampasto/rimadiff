@@ -61,14 +61,15 @@ class Renderer(RimadiffCommon):
 
         tables = []
         for name in table_names:
+            table_orig_name = name
             table_name = name
             is_diff = False
             if name.endswith('-diff'):
                 table_name = name.removesuffix('-diff')
                 is_diff = True
             table = self._generate_table(
-                table_name, is_diff, setup, cat_data, label_dict, user_id_dict,
-                today_ordinal
+                table_name, table_orig_name, is_diff, setup, cat_data,
+                label_dict, user_id_dict, today_ordinal
                 )
             tables.append(table)
 
@@ -337,8 +338,8 @@ class Renderer(RimadiffCommon):
         err_dict[category][val] += 1
 
     def _generate_table(
-        self, table_name, is_diff, setup, cat_data, label_dict, user_id_dict,
-        today_ordinal
+        self, table_name, table_orig_name, is_diff, setup, cat_data,
+        label_dict, user_id_dict, today_ordinal
     ):
         # cat_data   [category] [user_id] [label_id] = value
         # label_dict [category]           [label_id] = label
@@ -371,7 +372,7 @@ class Renderer(RimadiffCommon):
 
         header_row = [TableCell(t) for t in headers]
         table = Table(
-            table_name, 'data-table', header_row, has_row_headers=True)
+            table_orig_name, 'data-table', header_row, has_row_headers=True)
         table.styled_column[rima_col_i] = 'rima'
 
         for row_num, label_id in enumerate(label_ids):

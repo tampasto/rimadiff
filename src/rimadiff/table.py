@@ -58,6 +58,7 @@ class Table(RimadiffCommon):
     def render_lines(self):
         lines = []
         table_type = self.type
+        table_name = self.name
         col_width = self._column_width
         col_align = self.column_align
         has_col_header = self.has_column_headers
@@ -89,17 +90,20 @@ class Table(RimadiffCommon):
                     # Is table header cell in left top corner
                     style_classes.append('table_header')
 
-                specials = [(row_i, styled_row), (col_i, styled_col)]
-                for dim_i, dim_dict in specials:
+                styled_dim = [
+                    (row_i, col_i, styled_row),
+                    (col_i, row_i, styled_col)
+                    ]
+                for dim_i, dim2_i, dim_dict in styled_dim:
                     name = dim_dict.get(dim_i)
                     if name:
-                        if 'column_header' in style_classes:
+                        if dim2_i == 0:
                             style_classes.append(f'{name}_header')
                         else:
                             style_classes.append(name)
 
                 line += cell.get_coloured(
-                    table_type, width, align, style_classes)
+                    table_type, table_name, width, align, style_classes)
 
             lines.append(line)
         return lines

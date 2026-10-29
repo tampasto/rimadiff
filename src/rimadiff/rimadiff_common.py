@@ -24,7 +24,9 @@ class RimadiffCommon:
         if subkey:
             sk_table = type_table.get(subkey)
             if isinstance(sk_table, dict):
-                sdict |= sk_table
+                sk_sdict = sk_table.get(name)
+                if isinstance(sk_sdict, dict):
+                    sdict |= sk_sdict
         return sdict
 
     def error(self, msg_err, extra=''):

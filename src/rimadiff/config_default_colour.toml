@@ -2,16 +2,19 @@
 # Dark colour names: black, red, green, yellow, blue, magenta, cyan, white
 # Bright colour names: bright_* (e.g. bright_red)
 # 8-bit colour: INT
-# 24-bit colour: [INT, INT, INT]
-#               E.g. red is [255, 0, 0] or [0xff, 0x00, 0x00]
+# 24-bit colour: [INT, INT, INT] - meaning red, green, blue
+#   E.g. red is [255, 0, 0] or [0xff, 0x00, 0x00]
 
 # INT means integers on range [0, 255] inclusive
 
 # Boolean attrs: bold, italic, underline, reverse (for colours)
 #                overline, strikethrough, blink, dim
 
-# NB. Terminals have different support for ANSI colour codes.
-# Safest is to use named colours and attributes other than dim and blink.
+# NB. Terminals have different support for ANSI colour and format codes.
+#     Safest is to only use named colours.
+
+# Examples of customization on commented rows.
+# Subkeys for each table exist.
 
 [default.data-table]
 default.fg = 'white'
@@ -21,7 +24,7 @@ stripe.bg = 237 # Dark gray
 #table_header.bg = [0, 100, 255]
 column_header.bold = true
 row_header.bold = true
-#row_header_stripe.bg = ''
+#row_header_stripe.bg = 'magenta'
 
 good.fg = 'green'
 bad.fg = 'red'
@@ -32,10 +35,10 @@ rima_header.bg = 'yellow' # Orange
 rima_header.bold = true
 
 combat.italic = true
-combat_header.fg = 'bright_blue'
+combat_header.italic = true
 
-[default.data-table.xp]
-good.fg = 'bright_blue'
+#[default.data-table.xp-diff]
+#good.fg = 'bright_blue'
 
 [default.info-table]
 default.fg = 'white'

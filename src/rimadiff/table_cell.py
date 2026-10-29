@@ -19,11 +19,13 @@ class TableCell(RimadiffCommon):
     def __str__(self):
         return self.text
 
-    def get_coloured(self, table_type, width, align_name, style_classes):
+    def get_coloured(
+        self, table_type, table_name, width, align_name, style_classes
+    ):
         align = TableCell.ALIGN[align_name]
-        sdict = self.get_style(table_type, 'default') or {}
+        sdict = self.get_style(table_type, 'default', table_name) or {}
         for name in (style_classes + self.style_classes):
-            sdict |= self.get_style(table_type, name) or {}
+            sdict |= self.get_style(table_type, name, table_name) or {}
 
         styled = self.click_style(f' {self.text:{align}{width}} ', sdict)
         return styled
