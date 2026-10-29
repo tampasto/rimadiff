@@ -1,14 +1,11 @@
-import copy
-import json
 import math
-import urllib.parse
-from collections import Counter, namedtuple
+from collections import namedtuple
 from datetime import date, datetime
 from numbers import Number
 
 import click
-import requests
 
+from rimadiff.api_manager import APIManager
 from rimadiff.api_response import APIResponse
 from rimadiff.history_manager import HistoryManager
 from rimadiff.rimadiff_common import RimadiffCommon
@@ -21,14 +18,6 @@ class Renderer(RimadiffCommon):
         self.config = config
 
         self._force_download = False
-
-        self._download_success_users = []
-        self._download_fail_users = []
-        self._download_fail_errors = Counter()
-        self._bad_json_users = []
-        self._wrong_user_data = []
-        self._non_numeric_categories = {}
-        self._non_int_categories = {}
 
     def print_tables(self, setup_name, force_download, table_names):
         setup = self.config.get_user_setup(setup_name)
@@ -50,14 +39,21 @@ class Renderer(RimadiffCommon):
             if c.table_name in clean_table_names
             ]
 
-        with HistoryManager(history_path) as history:
+        with (HistoryManager(history_path) as history,
+            APIManager(self.config.api_url) as api):
+            # Source data from database and API
             cat_data, user_history_time = (
-                self._source_user_data(history, now, setup, categories))
+                self._source_user_data(history, api, now, setup, categories))
 
             user_id_dict = history.get_user_id_dict()
 
             label_dict = history.get_label_dict(
                 users_rima_first, today_ordinal, categories)
+
+            api_results = api.get_results()
+
+        click.echo()
+        api_results.echo(setup)
 
         tables = []
         for name in table_names:
@@ -72,40 +68,6 @@ class Renderer(RimadiffCommon):
                 label_dict, user_id_dict, today_ordinal
                 )
             tables.append(table)
-
-        click.echo()
-        dl_success = self._download_success_users
-        user_map = setup.user_orig.get
-        if len(dl_success):
-            click.echo(
-                'Downloaded: '
-                + ', '.join(map(user_map, dl_success)) + '\n'
-                )
-
-        dl_fail = self._download_fail_users
-        if len(dl_fail):
-            self.error(
-                'Could not download: ' + ', '.join(map(user_map, dl_fail)))
-
-        dl_errors = self._download_fail_errors
-        if dl_errors.total():
-            for text, count in dl_errors.items():
-                count_text = f'[{count}x] ' if count > 1 else ''
-                self.error(f'{count_text}{text}')
-            click.echo()
-
-        json_fail = self._bad_json_users
-        if len(json_fail):
-            self.error('Bad API JSON: ' + ', '.join(map(user_map, json_fail)))
-
-        if len(self._wrong_user_data):
-            self.error(
-                'API returned data for wrong users, snapshots not saved in '
-                'history:'
-                )
-            for user, user_response in self._wrong_user_data:
-                click.echo(f'  Requested {user_map(user)}, got {user_response}')
-            click.echo()
 
         if len(user_history_time):
             fetch_text = 'Fetched at'
@@ -131,22 +93,6 @@ class Renderer(RimadiffCommon):
                         )
             click.echo(fetch_text + '\n')
 
-        numeric_errs = (
-            (self._non_numeric_categories, 'numeric'),
-            (self._non_int_categories, 'integer')
-            )
-        for num_dict, label in numeric_errs:
-            if len(num_dict) == 0:
-                continue
-            self.warning(f'The API returned non-{label} datapoints for:')
-            cat_header = {c.category: c.header for c in HistoryManager.CATEGORIES}
-            for category, value_counter in num_dict.items():
-                vals = ', '.join(
-                    repr(val) + ('' if count == 1 else f' (x{count})')
-                    for val, count in value_counter.items()
-                    )
-                click.echo(f'  {cat_header[category]}: {vals}')
-
         for table in tables:
             lines = table.render_lines()
             for line in lines:
@@ -170,7 +116,7 @@ class Renderer(RimadiffCommon):
                 for i in range(len(table_names)):
                     table_names[i] = table_names[i].removesuffix('-diff')
 
-    def _source_user_data(self, history, now, setup, categories):
+    def _source_user_data(self, history, api, now, setup, categories):
         # cat_data[category][user_id][label_id] = value
         cat_data = {n: {} for n in categories}
 
@@ -192,17 +138,16 @@ class Renderer(RimadiffCommon):
                 today_ordinal, user_ids, categories)
 
         sourced: list[APIResponse] = []
-        with requests.Session() as session:
-            ctx = session, history # Context managers
+        ctx = history, api # Context managers
 
-            for user_id, user in db_users:
-                user_tuple = user, user_id, setup
-                db_data = user_db_data.get(user_id)
+        for user_id, user in db_users:
+            user_tuple = user, user_id, setup
+            db_data = user_db_data.get(user_id)
 
-                self._source_existing_user(db_data, user_tuple, ctx, sourced)
+            self._source_existing_user(db_data, user_tuple, ctx, sourced)
 
-            for user in new_users:
-                self._source_new_user(user, setup, today_ordinal, ctx, sourced)
+        for user in new_users:
+            self._source_new_user(user, setup, today_ordinal, ctx, sourced)
 
         # Add only requested table categories to cat_data, including db
         # pseudo-responses
@@ -219,7 +164,7 @@ class Renderer(RimadiffCommon):
 
     def _source_existing_user(self, db_data, user_tuple, ctx, sourced):
         user, user_id, setup  = user_tuple
-        session, history = ctx
+        history, api = ctx
 
         user_original = setup.user_orig[user]
         history.update_user_original(user_id, user_original)
@@ -229,7 +174,7 @@ class Renderer(RimadiffCommon):
             # Package in pseudo-response
             resp = APIResponse(db_data, labels={}, url=None, user_id=user_id)
         else:
-            resp = self._download_data(user, setup, session)
+            resp = api.download_data(user, setup)
             if not resp:
                 return
 
@@ -237,9 +182,9 @@ class Renderer(RimadiffCommon):
         sourced.append(resp)
 
     def _source_new_user(self, user, setup, today_ordinal, ctx, sourced):
-        session, history = ctx
+        history, api = ctx
 
-        resp = self._download_data(user, setup, session)
+        resp = api.download_data(user, setup)
         if not resp:
             return
 
@@ -247,95 +192,6 @@ class Renderer(RimadiffCommon):
         resp.user_id = history.add_user(user, user_original, today_ordinal)
 
         sourced.append(resp)
-
-    def _download_data(self, user, setup, session):
-        # data   [category] [label_id] = value
-        # labels [category] [label_id] = label
-
-        user_original = setup.user_orig[user]
-        quoted_user = urllib.parse.quote(user_original, safe='')
-        url = self.config.api_url.format(quoted_user)
-
-        resp = None
-        try:
-            r = session.get(url)
-            r.raise_for_status()
-        except requests.RequestException as err:
-            self._download_fail_users.append(user)
-            err_str = f'{type(err).__name__}: {err}'
-            self._download_fail_errors[err_str] += 1
-        else:
-            self._download_success_users.append(user)
-            obj = r.json()
-            data, labels, user_response = self._response_json_to_data(obj)
-            if data is None:
-                self._bad_json_users.append(user)
-            elif user != user_response.lower():
-                self._wrong_user_data.append((user_original, user_response))
-            else:
-                resp = APIResponse(data, labels, url)
-
-        return resp
-
-    def _response_json_to_data(self, obj):
-        # data   [category] [label_id] = value
-        # labels [category] [label_id] = label
-
-        user_response = str(obj.get('name')).strip()
-        skills = obj.get('skills')
-        activities = obj.get('activities')
-
-        not_list = lambda v: not isinstance(v, list)
-
-        if not_list(skills) or not_list(activities):
-            return None, None, None
-
-        data = {c.category: {} for c in HistoryManager.CATEGORIES}
-        labels = copy.deepcopy(data)
-
-        sk_field_table = {
-            'level': 'skill',
-            'xp':    'xp',
-            'rank':  'skill-rank'
-            }
-        self._add_json_portion(skills, sk_field_table, data, labels)
-
-        act_field_table = {
-            'score': 'activity',
-            'rank':  'activity-rank'
-            }
-        self._add_json_portion(activities, act_field_table, data, labels)
-
-        return data, labels, user_response
-
-    def _add_json_portion(self, obj, field_table, data, labels):
-        field_category = {}
-        db_cat = HistoryManager.CATEGORIES
-        for field, table_name in field_table.items():
-            field_category[field] = next(
-                c.category for c in db_cat if c.table_name == table_name)
-
-        for entry in obj:
-            id_ = entry['id']
-            for field in field_table:
-                category = field_category[field]
-
-                val = entry[field]
-                if not isinstance(val, Number):
-                    self._record_numeric_data_type_error(category, field, val)
-                elif not isinstance(val, int):
-                    self._record_numeric_data_type_error(
-                        category, field, val, True)
-                data[category][id_] = val
-
-                labels[category][id_] = str(entry['name']).strip()
-
-    def _record_numeric_data_type_error(self, category, field, val, for_int=False):
-        err_dict = self._non_numeric_categories
-        if for_int:
-            err_dict = self._non_int_categories
-        err_dict.setdefault(category, Counter())
-        err_dict[category][val] += 1
 
     def _generate_table(
         self, table_name, table_orig_name, is_diff, setup, cat_data,
