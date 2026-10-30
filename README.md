@@ -13,10 +13,11 @@ There is a special username defined as RIMA which will be the focus of
 comparison. RIMA is highlighted and it is possible to calculate relative
 differences against this user. Setting up RIMA username is optional.
 
-The application uses a configuration file and stores all fetched
+The application uses two configuration files and stores all fetched
 historical data in an [SQLite](https://sqlite.org/) database file in the
 user data directory. An alternate database path can also be defined in
-the config.
+the config. Colors and styles of the printed tables are completely
+customizable in the colour configuration.
 
 The datasets will not be refetched by default again for the same day
 unless forced to do so.
@@ -105,7 +106,8 @@ defined in the configuration from the
 
 In other words, it is recommended to first prepare the config user list
 before printing any tables. You can find the path to the configuration
-file by running the the following command.
+file by running the the following command. This command will also create
+new default configuration files if none exist.
 
 ```bash
 rimadiff path
@@ -129,17 +131,16 @@ and skill ranking table, you can use any of the following commands.
 rimadiff --table xp --table skill-rank
 rimadiff -t xp -t skill-rank
 rimadiff --table xr
-rimadiff -t xr
+rimadiff -txr
 ```
 
-If you only want to see the skill ranking table, you can type
+To print the arithmetic differences for each user with respect to RIMA,
+append the table name with '-diff' or use an upper case short form
+character.
 
-```bash
-rimadiff -t skill-rank
-rimadiff -t r
-# Or if you are REAAALLY lazy
-rimadiff -tr
+rimadiff -t xp-diff -t skill-rank-diff
+rimadiff -tXR
 ```
 
-The one letter short names for tables can be found on the help page
-`rimadiff -h`.
+The long and short forms for all the tables can be found on the help
+page `rimadiff -h`.
