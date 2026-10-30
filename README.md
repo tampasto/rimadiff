@@ -138,6 +138,7 @@ To print the arithmetic differences for each user with respect to RIMA,
 append the table name with '-diff' or use an upper case short form
 character.
 
+```bash
 rimadiff -t xp-diff -t skill-rank-diff
 rimadiff -tXR
 ```
