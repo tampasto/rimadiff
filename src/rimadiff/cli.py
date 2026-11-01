@@ -1,22 +1,48 @@
+from pathlib import Path
+
 from rimadiff.config_reader import ConfigReader
 from rimadiff.renderer import Renderer
 
 import click
 
+COMMON_EPILOG="""\b
+    Environment variables:
+      RIMADIFF_CONFIG_DIR  Default value for --config-dir
+    """
+config_dir_option = click.option(
+    '--config-dir',
+    metavar='PATH', envvar='RIMADIFF_CONFIG_DIR',
+    type=click.Path(
+        file_okay=False, writable=True, resolve_path=True, path_type=Path),
+    help='Path to the configuration directory'
+    )
+
 
 @click.group(
     invoke_without_command=True,
-    context_settings={'help_option_names': ['-h', '--help']}
+    context_settings={'help_option_names': ['-h', '--help']},
+    epilog=COMMON_EPILOG.rstrip() + """
+      RIMADIFF_USER_SETUP  Default value for --user-setup
+      RIMADIFF_TABLE       Default value for --table
+    """
     )
-@click.option('-s', '--user-setup', default='default',
+@click.option(
+    '-t', '--table', multiple=True,
+    envvar='RIMADIFF_TABLE',
+    help='Select tables'
+    )
+@click.option(
+    '-f', '--force-download', is_flag=True,
+    help='Do not skip downloading if done today already'
+    )
+@click.option(
+    '-s', '--user-setup', default='default',
     metavar='NAME', envvar='RIMADIFF_USER_SETUP',
     help='Name of user setup, using "default" if not given'
     )
-@click.option('-f', '--force-download', is_flag=True,
-    help='Do not skip downloading if done today already')
-@click.option('-t', '--table', multiple=True, help='Select tables')
+@config_dir_option
 @click.pass_context
-def cli(ctx, user_setup, force_download, table):
+def cli(ctx, table, force_download, user_setup, config_dir):
     """
     Compare OSRS game hiscores in terminal.
 
@@ -45,9 +71,6 @@ def cli(ctx, user_setup, force_download, table):
     a, activity ..... Activities
     c, activity-rank  Activity rankings
     e, every ........ Shorthand for every table above
-
-    To avoid rewriting the user setup for every call, it can be given in
-    the shell environment variable RIMADIFF_USER_SETUP.
     """
     if ctx.invoked_subcommand is not None:
         return
@@ -60,7 +83,7 @@ def cli(ctx, user_setup, force_download, table):
     if len(table_names) == 0:
         table_names.append('skill')
 
-    config = ConfigReader()
+    config = ConfigReader(config_dir)
     config.ensure_config()
     config.read()
     is_valid, valid_names = config.check_user_setup(user_setup)
@@ -160,10 +183,17 @@ def _err_format(len_, no_table, orig, valid):
         )
 
 
-@cli.command()
-def history():
-    """List history snapshots."""
-    config = ConfigReader()
+@cli.command(epilog=COMMON_EPILOG)
+@config_dir_option
+def history(config_dir):
+    """
+    List history snapshots.
+
+    \b
+    Environment variables:
+    RIMADIFF_CONFIG_DIR  Default value for --config-dir
+    """
+    config = ConfigReader(config_dir)
     config.ensure_config()
     config.read()
 
@@ -171,13 +201,16 @@ def history():
     renderer.list_history()
 
 
-@cli.command()
-@click.option('-s', '--user-setup', default='default',
+@cli.command(epilog=COMMON_EPILOG)
+@click.option(
+    '-s', '--user-setup', default='default',
     metavar='NAME', envvar='RIMADIFF_USER_SETUP',
-    help='Name of user setup, using "default" if not given')
-def user(user_setup):
+    help='Name of user setup, using "default" if not given'
+    )
+@config_dir_option
+def user(user_setup, config_dir):
     """List information on the users."""
-    config = ConfigReader()
+    config = ConfigReader(config_dir)
     config.ensure_config()
     config.read()
 
@@ -185,10 +218,11 @@ def user(user_setup):
     renderer.list_users(user_setup)
 
 
-@cli.command()
-def path():
+@cli.command(epilog=COMMON_EPILOG)
+@config_dir_option
+def path(config_dir):
     """List paths used by the script."""
-    config = ConfigReader()
+    config = ConfigReader(config_dir)
     config.ensure_config()
     config.read()
 

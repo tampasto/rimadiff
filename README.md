@@ -14,10 +14,10 @@ comparison. RIMA is highlighted and it is possible to calculate relative
 differences against this user. Setting up RIMA username is optional.
 
 The application uses two configuration files and stores all fetched
-historical data in an [SQLite](https://sqlite.org/) database file in the
-user data directory. An alternate database path can also be defined in
-the config. Colors and styles of the printed tables are completely
-customizable in the colour configuration.
+historical data in an [SQLite](https://sqlite.org/) database file. All
+paths are configurable. Colors and styles of the printed tables are
+completely customizable in the colour configuration and multiple colour
+schemes are supported.
 
 The datasets will not be refetched by default again for the same day
 unless forced to do so.
@@ -99,7 +99,13 @@ alias rimadiff='source /path/to/rimadiff/.venv/bin/activate && python3 -m rimadi
 When `rimadiff` is run for the first time, it creates a new
 configuration file in the
 [platform-specific directory](https://platformdirs.readthedocs.io/en/latest/platforms.html)
-under the directory "rimadiff". When the base command is run for
+under the directory "rimadiff".
+
+If you wish to use a custom location for your config, define the shell
+environment variable `RIMADIFF_CONFIG_DIR` in your `.bashrc`. The
+directory must be writable.
+
+When the base command is run for
 printing the tables, it will also download the hiscores for the users
 defined in the configuration from the
 [Old School Hiscores API](https://runescape.wiki/w/Application_programming_interface#Old_School_Hiscores).

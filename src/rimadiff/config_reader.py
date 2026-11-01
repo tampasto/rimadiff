@@ -9,13 +9,21 @@ from rimadiff.user_setup import UserSetup
 
 
 class ConfigReader(RimadiffCommon):
-    DEFAULT_CONFIG = 'config_default_general.toml'
+    DEFAULT_GENERAL_CONFIG = 'config_default_general.toml'
     DEFAULT_COLOUR_CONFIG = 'config_default_colour.toml'
+    GENERAL_CONFIG_NAME = 'rimadiff.toml'
+    COLOUR_CONFIG_NAME = 'colour.toml'
 
-    def __init__(self):
+    def __init__(self, config_dir=None):
         self._dirs = PlatformDirs('rimadiff', False)
-        self.path = self._dirs.place_config_file('rimadiff.toml')
-        self.colour_path = self._dirs.place_config_file('colour.toml')
+        if isinstance(config_dir, Path):
+            config_dir.mkdir(parents=True, exist_ok=True)
+            self.path = config_dir / ConfigReader.GENERAL_CONFIG_NAME
+            self.colour_path = config_dir / ConfigReader.COLOUR_CONFIG_NAME
+        else:
+            self.path = self._dirs.place_config_file(ConfigReader.GENERAL_CONFIG_NAME)
+            self.colour_path = self._dirs.place_config_file(ConfigReader.COLOUR_CONFIG_NAME)
+
         self.history_path = None
         self.history_path_from_config = None
         self.api_url = None
@@ -25,7 +33,7 @@ class ConfigReader(RimadiffCommon):
     def ensure_config(self):
         if not self.path.is_file():
             self._write_default_config(
-                'general', ConfigReader.DEFAULT_CONFIG, self.path)
+                'general', ConfigReader.DEFAULT_GENERAL_CONFIG, self.path)
 
         if not self.colour_path.is_file():
             self._write_default_config(
