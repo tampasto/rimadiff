@@ -5,7 +5,7 @@ import click
 from rimadiff.command_common import COMMON_EPILOG, config_dir_option
 from rimadiff.config_reader import ConfigReader
 from rimadiff.history_manager import HistoryManager
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 from rimadiff.table import Table
 from rimadiff.table_cell import TableCell
 
@@ -28,7 +28,7 @@ def history(config_dir):
     cmd.list_history(config)
 
 
-class CommandHistory(RimadiffCommon):
+class CommandHistory(ColourBase):
     def list_history(self, config):
         snapshots = None
         history_path = config.history_path

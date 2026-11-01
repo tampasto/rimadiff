@@ -1,7 +1,7 @@
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 
 
-class UserSetup(RimadiffCommon):
+class UserSetup(ColourBase):
     ERROR_USERS = 'Missing key users in user-setup table or it is not a list.'
     ERROR_CONFIG = 'Configuration path: {}'
     WARN_ALIAS = (

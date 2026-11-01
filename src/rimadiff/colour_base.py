@@ -1,13 +1,13 @@
 import click
 
 
-class RimadiffCommon:
-    colour_scheme = None
-    _colour_warnings = set()
+class ColourBase:
+    scheme = None
+    _warning_set = set()
 
     def get_style(self, type_, name, subkey=None):
         sdict = None
-        scheme = RimadiffCommon.colour_scheme
+        scheme = ColourBase.scheme
         if not scheme:
             return {}
 
@@ -65,15 +65,15 @@ class RimadiffCommon:
             if type(err) == TypeError:
                 msg = msg.replace('style() got a', 'A')
                 msg = msg.replace('keyword argument', 'style specifier')
-            RimadiffCommon._colour_warnings.add(msg)
+            ColourBase._warning_set.add(msg)
         return styled
 
     @classmethod
-    def print_colour_warnings(cls):
-        if cls._colour_warnings:
-            pl = ('' if len(cls._colour_warnings) == 1 else 's')
+    def print_warnings(cls):
+        if cls._warning_set:
+            pl = ('' if len(cls._warning_set) == 1 else 's')
             click.echo(f'Error{pl} in colour configuration:')
-            for text in sorted(cls._colour_warnings):
+            for text in sorted(cls._warning_set):
                 click.echo(f'  {text}')
             click.echo()
 

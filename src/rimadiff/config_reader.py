@@ -4,11 +4,11 @@ from pathlib import Path
 import click
 from platformdirs import PlatformDirs
 
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 from rimadiff.user_setup import UserSetup
 
 
-class ConfigReader(RimadiffCommon):
+class ConfigReader(ColourBase):
     DEFAULT_GENERAL_CONFIG = 'config_default_general.toml'
     DEFAULT_COLOUR_CONFIG = 'config_default_colour.toml'
     GENERAL_CONFIG_NAME = 'rimadiff.toml'
@@ -81,7 +81,7 @@ class ConfigReader(RimadiffCommon):
             if not isinstance(scheme, dict):
                 self.warning(f'No such colour scheme {self.colour_scheme!r}.')
             else:
-                RimadiffCommon.colour_scheme = scheme
+                ColourBase.scheme = scheme
 
     def check_user_setup(self, name):
         valid_names = list(self.user_setup.keys())

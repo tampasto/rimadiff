@@ -1,9 +1,9 @@
 import click
 
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 
 
-class APIResults(RimadiffCommon):
+class APIResults(ColourBase):
     def __init__(self, data_tuple):
         self.data_tuple = data_tuple
 

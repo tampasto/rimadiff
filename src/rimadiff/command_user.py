@@ -5,7 +5,7 @@ import click
 from rimadiff.command_common import COMMON_EPILOG, config_dir_option
 from rimadiff.config_reader import ConfigReader
 from rimadiff.history_manager import HistoryManager
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 from rimadiff.table import Table
 from rimadiff.table_cell import TableCell
 
@@ -27,7 +27,7 @@ def user(user_setup, config_dir):
     cmd.list_users(user_setup, config)
 
 
-class CommandUser(RimadiffCommon):
+class CommandUser(ColourBase):
     def list_users(self, setup_name, config):
         counts = latest_snapshot = None
 

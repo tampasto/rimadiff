@@ -8,12 +8,12 @@ import click
 from rimadiff.api_manager import APIManager
 from rimadiff.api_response import APIResponse
 from rimadiff.history_manager import HistoryManager
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 from rimadiff.table import Table
 from rimadiff.table_cell import TableCell
 
 
-class Renderer(RimadiffCommon):
+class Renderer(ColourBase):
     def __init__(self, config):
         self.config = config
 
@@ -100,7 +100,7 @@ class Renderer(RimadiffCommon):
                 click.echo(line)
             click.echo()
 
-        RimadiffCommon.print_colour_warnings()
+        ColourBase.print_warnings()
 
     def _validate_rima(self, setup, table_names):
         no_rima = not setup.rima

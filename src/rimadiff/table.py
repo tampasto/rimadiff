@@ -1,9 +1,9 @@
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 
 import click
 
 
-class Table(RimadiffCommon):
+class Table(ColourBase):
     ERR_INSERT_LEN = (
         'Inserting row of {} cells to table of {} cell rows in {}.')
 

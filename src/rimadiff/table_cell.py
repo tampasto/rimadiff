@@ -1,11 +1,11 @@
 import click
 
-from rimadiff.rimadiff_common import RimadiffCommon
+from rimadiff.colour_base import ColourBase
 
 NOT_SET = object()
 
 
-class TableCell(RimadiffCommon):
+class TableCell(ColourBase):
     ALIGN = {'right': '>', 'left': '<', 'center': '^'}
 
     def __init__(self, text, value=NOT_SET):
