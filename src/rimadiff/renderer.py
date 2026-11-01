@@ -7,13 +7,14 @@ import click
 
 from rimadiff.api_manager import APIManager
 from rimadiff.api_response import APIResponse
-from rimadiff.history_manager import HistoryManager
 from rimadiff.colour_base import ColourBase
+from rimadiff.format_base import FormatBase
+from rimadiff.history_manager import HistoryManager
 from rimadiff.table import Table
 from rimadiff.table_cell import TableCell
 
 
-class Renderer(ColourBase):
+class Renderer(ColourBase, FormatBase):
     def __init__(self, config):
         self.config = config
 
@@ -260,7 +261,7 @@ class Renderer(ColourBase):
                 if is_rank and value == -1:
                     value = text = '-'
                 elif isinstance(value, Number):
-                    text = self._format_numeric(value)
+                    text = self.format_number(value)
                 else:
                     text = str(value)
                 row.append(TableCell(text, value))
@@ -354,12 +355,7 @@ class Renderer(ColourBase):
 
         if is_available and rima_available:
             cell.value = cell.value - rima_val
-            cell.text = self._format_numeric(cell.value, show_plus=True)
+            cell.text = self.format_number(cell.value, show_plus=True)
         elif is_available:
             cell.value = 0
             cell.text = 'n/a'
-
-    def _format_numeric(self, value, show_plus=False):
-        sign = ('+' if show_plus and value > 0 else '')
-        text = f'{value:{sign},}'.replace(',', ' ')
-        return text

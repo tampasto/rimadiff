@@ -2,9 +2,10 @@ from datetime import datetime
 
 import click
 
+from rimadiff.colour_base import ColourBase
 from rimadiff.command_common import COMMON_EPILOG, config_dir_option
 from rimadiff.config_reader import ConfigReader
-from rimadiff.colour_base import ColourBase
+from rimadiff.format_base import FormatBase
 from rimadiff.table import Table
 from rimadiff.table_cell import TableCell
 
@@ -21,7 +22,7 @@ def path(config_dir):
     cmd.list_paths(config)
 
 
-class CommandPath(ColourBase):
+class CommandPath(ColourBase, FormatBase):
     def list_paths(self, config):
         paths = [
             ['General config', config.path, '', False],
@@ -52,7 +53,7 @@ class CommandPath(ColourBase):
             except OSError as err:
                 errs.append(str(err))
             else:
-                size = self._size_format(st.st_size)
+                size = self.format_size(st.st_size)
                 mod_dt = datetime.fromtimestamp(st.st_mtime)
                 modified = mod_dt.strftime(time_fmt)
 
@@ -79,12 +80,3 @@ class CommandPath(ColourBase):
 
         tz = datetime.now().astimezone().strftime('%z')
         click.echo(f'Timezone {tz}.\n')
-
-    def _size_format(self, size):
-        if size/10 > 1024**3:
-            return f'{size//1024**3}G'
-        elif size/10 > 1024**2:
-            return f'{size//1024**2}M'
-        elif size/10 > 1024:
-            return f'{size//1024}k'
-        return f'{size}'
