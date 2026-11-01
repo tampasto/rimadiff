@@ -236,8 +236,9 @@ class Renderer(ColourBase):
         for row_num, label_id in enumerate(label_ids):
             # Add combat row
             if table_name == 'skill' and row_num == 1:
+                users_ids = [(u, user_id_dict[u]) for u in setup.users]
                 combat_row = self._get_combat_row(
-                    user_data, label_value, setup.users)
+                    user_data, label_value, users_ids)
                 self._diff_format_row(combat_row, rima_col_i, is_rank, is_diff)
                 table.add_row(combat_row)
                 table.styled_row[2] = 'combat'
@@ -272,7 +273,7 @@ class Renderer(ColourBase):
 
         return table
 
-    def _get_combat_row(self, user_data, label_value, users):
+    def _get_combat_row(self, user_data, label_value, users_ids):
         # user_data   [user_id] [label_id] = value
         # label_value           [label_id] = label
 
@@ -291,8 +292,8 @@ class Renderer(ColourBase):
             )
 
         cell_values = ['Combat']
-        for user_i, user in enumerate(users):
-            skill_values = user_data[user_i]
+        for user, user_id in users_ids:
+            skill_values = user_data[user_id]
             levels = SkillTuple(*(skill_values.get(id_) for id_ in skill_ids))
             combat_level = self._get_combat_level(levels)
             cell_values.append(combat_level)

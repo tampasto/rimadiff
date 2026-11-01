@@ -299,9 +299,9 @@ class HistoryManager(AbstractContextManager):
         sql_cat_id = (
             'SELECT DISTINCT D.label_category, D.label_id '
             'FROM User AS U '
-            'LEFT JOIN UserData AS D '
-                f'ON U.name {in_(users)} AND D.date_ordinal = ? '
-                f'AND U.id = D.user_id AND D.label_category {in_(categories)} '
+            'LEFT JOIN UserData AS D ON U.id = D.user_id '
+            f'WHERE U.name {in_(users)} AND D.date_ordinal = ? '
+            f'AND D.label_category {in_(categories)}'
             )
         ph_cat_id = (*users, date_ordinal, *categories)
         cat_id = self._query_all(sql_cat_id, ph_cat_id, arraysize=300)
