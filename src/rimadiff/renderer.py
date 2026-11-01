@@ -31,7 +31,8 @@ class Renderer(RimadiffCommon):
         today_ordinal = now.toordinal()
 
         history_path = self.config.history_path
-        users_rima_first = sorted(setup.users, key=lambda u: (u != setup.rima, u))
+        users_rima_first = sorted(
+            setup.users, key=lambda u: (u != setup.rima, u))
 
         clean_table_names = [n.removesuffix('-diff') for n in table_names]
         categories = [
@@ -200,7 +201,8 @@ class Renderer(RimadiffCommon):
         # cat_data   [category] [user_id] [label_id] = value
         # label_dict [category]           [label_id] = label
 
-        cat = next(c for c in HistoryManager.CATEGORIES if c.table_name == table_name)
+        cat = next(
+            c for c in HistoryManager.CATEGORIES if c.table_name == table_name)
         user_data = cat_data[cat.category]
         label_value = label_dict[cat.category]
         # user_data   [user_id] [label_id] = value
@@ -282,7 +284,8 @@ class Renderer(RimadiffCommon):
 
         skill_ids = tuple(
             next(
-                (i for i, v in label_value.items() if str(v).strip().lower() == s),
+                (i for i, v in label_value.items()
+                 if str(v).strip().lower() == s),
                 None)
             for s in skill_names
             )
@@ -359,173 +362,3 @@ class Renderer(RimadiffCommon):
         sign = ('+' if show_plus and value > 0 else '')
         text = f'{value:{sign},}'.replace(',', ' ')
         return text
-
-    def list_history(self):
-        snapshots = None
-        history_path = self.config.history_path
-        if history_path.exists():
-            with HistoryManager(history_path) as history:
-                snapshots = history.get_history_snapshots()
-        else:
-            self.warning(
-                '\nHistory database does not exist.\n\n'
-                f'Path: {history_path}'
-                )
-            return
-
-        header = ['Num', 'Date', 'Time', 'Timezone']
-        align = ['right', 'center', 'left', 'left']
-        header_row = [TableCell(t) for t in header]
-        table = Table('history', 'info-table', header_row, align)
-
-        for snapshot_i, (date_ordinal, time_list) in enumerate(snapshots):
-            date_obj = date.fromordinal(date_ordinal)
-            date_str = f'{date_obj}'
-            num = len(snapshots) - snapshot_i
-            time = ', '.join(t[0] for t in time_list)
-            tz = ', '.join({t[1]: 0 for t in time_list})
-
-            row_values = [(num,), (date_str, date_ordinal), (time,), (tz,)]
-            row = [TableCell(*a) for a in row_values]
-            table.add_row(row)
-
-        click.echo()
-        table.echo()
-
-    def list_users(self, setup_name):
-        counts = latest_snapshot = None
-
-        history_path = self.config.history_path
-        setup = self.config.get_user_setup(setup_name)
-        user_set = set(setup.users) # Config
-        user_orig = setup.user_orig.copy()
-
-        if history_path.exists():
-            with HistoryManager(history_path) as history:
-                counts, latest_snapshot = history.get_info_users()
-
-            # counts: U.name, U.name_original, Count(R.date_ordinal)
-            # latest_snapshot: U.name, R2.date_ordinal, R2.time, R2.timezone
-
-            user_set |= (
-                {r[0] for r in counts} | {r[0] for r in latest_snapshot})
-
-            # If both database and config aliases, show config aliases
-            user_orig |= {r[0]: r[1] for r in counts if r[0] not in user_orig}
-
-        header = ['Name', 'Alias', 'RIMA', 'Snapshots', 'Latest snapshot']
-        align = ['left', 'left', 'left', 'right', 'center']
-        header_row = [TableCell(t) for t in header]
-        table = Table('user', 'info-table', header_row, align)
-
-        tz_set = set()
-        if latest_snapshot is not None:
-            tz_set = {t[3] for t in latest_snapshot}
-        same_tz = (len(tz_set) == 1)
-        for row_i, user in enumerate(sorted(user_set)):
-            snapshots = latest_date = '-'
-            date_ordinal = -1
-            if counts is not None:
-                count_row = next(r for r in counts if r[0] == user)
-                snapshot_row = next(
-                    r for r in latest_snapshot if r[0] == user)
-
-                snapshots = count_row[2]
-                _, date_ordinal, time, timezone = snapshot_row
-
-                tz_part = ('' if same_tz else f' {timezone}')
-                if date_ordinal is not None:
-                    latest_date = (
-                        f'{date.fromordinal(date_ordinal)} {time}{tz_part}')
-
-            user_original = user_orig[user]
-            alias = setup.user_alias.get(user, '-')
-            is_rima = ('X' if user == setup.rima else '')
-            row_values = [
-                (user_original,),
-                (alias,),
-                (is_rima,),
-                (snapshots,),
-                (latest_date, date_ordinal),
-                ]
-            row = [TableCell(*a) for a in row_values]
-            table.add_row(row)
-
-        click.echo()
-        table.echo()
-
-        tz_info = ''
-        if same_tz:
-            tz_info = f' Timezone {next(iter(tz_set))}.'
-        click.echo(
-            f'Aliases and RIMA from user setup "{setup_name}".{tz_info}\n')
-
-    def list_paths(self):
-        paths = [
-            ['General config', self.config.path, '', False],
-            ['Colour config', self.config.colour_path, '', False],
-            ['History database', self.config.history_path, '',
-                self.config.history_path_from_config]
-            ]
-
-        # List path information
-        align = ['left', 'left', 'right', 'center']
-        header = ['Name', 'Source', 'Size', 'Modified']
-        time_fmt = '%Y-%m-%d %H:%M'
-
-        header_row = [TableCell(t) for t in header]
-        info_table = Table('path-info', 'info-table', header_row, align)
-        errs = []
-        for entry in paths:
-            from_config = entry[3]
-            source = ('Config' if from_config else '-')
-            size = '<err>'
-            modified = '<err>'
-            path = entry[1]
-            try:
-                st = path.stat()
-            except FileNotFoundError:
-                size = modified = '-'
-                entry[2] = ' (does not exist)'
-            except OSError as err:
-                errs.append(str(err))
-            else:
-                size = self._size_format(st.st_size)
-                mod_dt = datetime.fromtimestamp(st.st_mtime)
-                modified = mod_dt.strftime(time_fmt)
-
-            name = entry[0]
-            row_values = [name, source, size, modified]
-            row = [TableCell(t) for t in row_values]
-            info_table.add_row(row)
-
-        click.echo()
-        if errs:
-            self.error('\n'.join(errs))
-        info_table.echo()
-
-        # List actual paths
-        align = ['left', 'left']
-        header = ['Name', 'Path']
-
-        header_row = [TableCell(t) for t in header]
-        path_table = Table('path', 'info-table', header_row, align)
-        for name, path, exist, _ in paths:
-            row = [TableCell(v) for v in (name, f'{path}{exist}')]
-            path_table.add_row(row)
-        path_table.echo()
-
-        tz = datetime.now().astimezone().strftime('%z')
-        click.echo(f'Timezone {tz}.\n')
-
-    def _size_format(self, size):
-        if size/10 > 1024**3:
-            return f'{size//1024**3}G'
-        elif size/10 > 1024**2:
-            return f'{size//1024**2}M'
-        elif size/10 > 1024:
-            return f'{size//1024}k'
-        return f'{size}'
-
-
-
