@@ -33,7 +33,7 @@ class HistoryManager(AbstractContextManager):
         cur = self.cursor
         cur.execute('PRAGMA foreign_keys = ON')
         if write_schema:
-            sql = self._get_schema()
+            sql = self._get_schema_script()
             cur.executescript(sql)
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -47,7 +47,7 @@ class HistoryManager(AbstractContextManager):
     def history_exists(self):
         return self.db_path.exists()
 
-    def _get_schema(self):
+    def _get_schema_script(self):
         category_comment = ', '.join(
             f'{c.category}: {c.header}' for c in HistoryManager.CATEGORIES)
         with open(type(self).SCHEMA_PATH, 'r', encoding='utf-8') as fp:
@@ -189,6 +189,7 @@ class HistoryManager(AbstractContextManager):
         return versions
 
     def _get_id_label_version_dict(self, category):
+        # id_label_version[label_id][label] = version
         sql = (
             'SELECT id, value, version '
             'FROM Label '
@@ -282,6 +283,18 @@ class HistoryManager(AbstractContextManager):
         user_original_dict = dict(cur.fetchall())
         return user_original_dict
 
+    def get_user_added_date_ordinal_dict(self):
+        cur = self.cursor
+        cur.arraysize = 100
+        user_added_dict = {}
+        try:
+            cur.execute('SELECT name, added_date_ordinal FROM User')
+        except sqlite3.OperationalError:
+            pass
+        else:
+            user_added_dict = dict(cur.fetchall())
+        return user_added_dict
+
     def get_user_id_dict(self):
         cur = self.cursor
         cur.arraysize = 100
@@ -356,7 +369,7 @@ class HistoryManager(AbstractContextManager):
             return row[0]
         return row
 
-    def _query_all(self, sql, placeholders, *, arraysize=None):
+    def _query_all(self, sql, placeholders=(), *, arraysize=None):
         cur = self.cursor
         if arraysize is not None:
             cur.arraysize = arraysize
@@ -372,7 +385,7 @@ class HistoryManager(AbstractContextManager):
             'SELECT DISTINCT date_ordinal, time, timezone '
             'FROM UserDataRequest'
             )
-        rows = self._query_all(sql, (), arraysize=300)
+        rows = self._query_all(sql, arraysize=300)
 
         snapshots = []
         ordinals = sorted({r[0] for r in rows})
@@ -410,3 +423,5 @@ class HistoryManager(AbstractContextManager):
         latest_snapshot = cur.fetchall()
         return counts, latest_snapshot
 
+    def vacuum(self):
+        self.cursor.execute('VACUUM')
