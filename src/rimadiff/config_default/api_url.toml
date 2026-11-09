@@ -1,0 +1,47 @@
+# See descriptions from
+# https://runescape.wiki/w/Application_programming_interface#Old_School_Hiscores
+
+# The key and placeholder for model is optional
+
+[url]
+default = 'https://secure.runescape.com/m={model}/index_lite.json?player={user}'
+
+[api.main]
+url = 'default'
+model = 'hiscore_oldschool'
+display = 'Main'
+
+[api.ironman]
+url = 'default'
+model = 'hiscore_oldschool_ironman'
+display = 'Ironman'
+
+[api.hardcore]
+url = 'default'
+model = 'hiscore_oldschool_hardcore_ironman'
+display = 'Hardcore Ironman'
+
+[api.ultimate]
+url = 'default'
+model = 'hiscore_oldschool_ultimate'
+display = 'Ultimate Ironman'
+
+[api.deadman]
+url = 'default'
+model = 'hiscore_oldschool_deadman'
+display = 'Deadman Mode'
+
+[api.seasonal]
+url = 'default'
+model = 'hiscore_oldschool_seasonal'
+display = 'Seasonal'
+
+[api.tournament]
+url = 'default'
+model = 'hiscore_oldschool_tournament'
+display = 'Tournament'
+
+[api.fresh_start]
+url = 'default'
+model = 'hiscore_oldschool_fresh_start'
+display = 'Fresh Start Worlds'

@@ -37,8 +37,10 @@ rima_header.bold = true
 combat.italic = true
 combat_header.italic = true
 
+
 #[default.data-table.xp-diff]
 #good.fg = 'bright_blue'
+
 
 [default.info-table]
 default.fg = 'white'
@@ -47,7 +49,8 @@ stripe.fg = 'blue'
 column_header.bold = true
 row_header.bold = true
 
+
 [default.message]
 warning.fg='bright_yellow'
 error.fg='bright_red'
-info.fg='blue'
+info.fg='bright_blue'

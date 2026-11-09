@@ -1,7 +1,7 @@
 # rimadiff
 Compare OSRS game hiscores in terminal.
 
-The CLI can display comparison tables for
+The CLI displays colour-judged comparison tables for
 
 * Skill levels
 * Skill experiences
@@ -9,15 +9,20 @@ The CLI can display comparison tables for
 * Activity scores
 * Activity ranks
 
+The source data is downloaded from the
+[Old School RuneScape Hiscore APIs](https://runescape.wiki/w/Application_programming_interface#Old_School_Hiscores).
+
 There is a special username defined as RIMA which will be the focus of
 comparison. RIMA is highlighted and it is possible to calculate relative
 differences against this user. Setting up RIMA username is optional.
 
-The application uses two configuration files and stores all fetched
+The application uses TOML configuration files and stores all fetched
 historical data in an [SQLite](https://sqlite.org/) database file. All
-paths are configurable. Colors and styles of the printed tables are
-completely customizable in the colour configuration and multiple colour
-schemes are supported.
+paths are configurable as environment variables. Colours and styles of
+the printed tables are completely customizable in the colour
+configuration and multiple colour schemes are supported. API URLs can be
+edited in a separate configuration file if they were to change or if
+other APIs with similar JSON responses were to be used.
 
 The datasets will not be refetched by default again for the same day
 unless forced to do so.
@@ -25,20 +30,28 @@ unless forced to do so.
 The default username setup of the configuration file looks like this:
 
 ```toml
-[user-setup.default]
-users = ['Faux', 'Manked', 'Mote Plox', 'Mr Mammal']
-user_alias = {'Manked' = 'PKer', 'Mote Plox' = 'Historian'}
+users = ['Faux', 'Manked', 'Mote Plox', 'Mr Mammal', 'Herbiboar']
 rima = 'Faux'
+user_alias = {'Manked' = 'PKer', 'Mote Plox' = 'Historian'}
+default_api = 'main'
+user_api = {'Herbiboar' = 'ultimate'}
 ```
 
 This means that username Faux is RIMA. Users Manked and Mote Plox have
-aliases PKer and Historian respectively. The alias is shown in the tables
-instead of their real usernames. Aliases are optional. User Mr Mammal
-will be displayed with their real username. The configuration file
-follows [TOML format](https://toml.io/en/).
+aliases PKer and Historian respectively. The alias is shown in the
+tables instead of their real usernames. Aliases are optional. The
+`default_api` definition is a no-op as Main account API is the default
+anyways.  This will be the default API for all users, if not specified
+otherwise in the key `user_api`. User Herbiboar is an ultimate ironman
+and their results are downloaded from the respective API. Rank colouring
+is not applied for users from a different API.
 
-You may add multiple user setups by adding more `[user-setup.SETUP_NAME]`
-tables. The only required key is `users`, the others can be left out.
+For the configuration file syntax, see the
+[TOML guide](https://toml.io/en/).
+
+You may add multiple user setups by adding more
+`[user-setup.SETUP_NAME]` tables. The only required key is `users`, the
+others can be left out.
 
 ## Installing
 Clone or download the repository first. Examples are given for pip and
@@ -93,27 +106,31 @@ You may want to create an alias for the command in your `.bashrc` or
 
 ```bash
 alias rimadiff='uv run --project /path/to/rimadiff rimadiff'
-alias rimadiff='source /path/to/rimadiff/.venv/bin/activate && python3 -m rimadiff'
+alias rimadiff='. /path/to/rimadiff/.venv/bin/activate && python3 -m rimadiff'
 ```
 
-When `rimadiff` is run for the first time, it creates a new
-configuration file in the
-[platform-specific directory](https://platformdirs.readthedocs.io/en/latest/platforms.html)
-under the directory "rimadiff".
+When the base command `rimadiff` is run for the first time, it writes
+new default configuration files in the
+[platform-specific directories](https://platformdirs.readthedocs.io/en/latest/platforms.html)
+under the directory "rimadiff". The directories are config and data.
 
-If you wish to use a custom location for your config, define the shell
-environment variable `RIMADIFF_CONFIG_DIR` in your `.bashrc`. The
-directory must be writable.
+If you wish to use custom locations for your config and/or history
+database file, define the shell environment variables in your `.bashrc`.
+The paths must be writable. For example:
 
-When the base command is run for
-printing the tables, it will also download the hiscores for the users
-defined in the configuration from the
-[Old School Hiscores API](https://runescape.wiki/w/Application_programming_interface#Old_School_Hiscores).
+```bash
+export RIMADIFF_CONFIG_DIR=~/.rimadiff_config
+export RIMADIFF_HISTORY_PATH=~/.rimadiff_history.db
+```
+
+When the base command is run for printing the tables, it will also
+download the hiscores for the users defined in the configuration if the
+database or a snapshot for today does not yet exist.
 
 In other words, it is recommended to first prepare the config user list
 before printing any tables. You can find the path to the configuration
-file by running the the following command. This command will also create
-new default configuration files if none exist.
+file by running the the following command. None of the subcommands write
+any files except "init-config".
 
 ```bash
 rimadiff path

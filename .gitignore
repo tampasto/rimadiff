@@ -222,3 +222,5 @@ __marimo__/
 # Vim swap files
 *.swp
 *.swo
+
+/old/

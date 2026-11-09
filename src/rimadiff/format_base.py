@@ -1,4 +1,6 @@
 class FormatBase:
+    time_format = '%Y-%m-%d %H:%M'
+
     def format_number(self, value, show_plus=False):
         sign = ('+' if show_plus and value > 0 else '')
         text = f'{value:{sign},}'.replace(',', ' ')
@@ -12,3 +14,6 @@ class FormatBase:
         elif size/10 > 1024:
             return f'{size//1024}k'
         return f'{size}'
+
+    def format_time(self, dt):
+        return dt.strftime(FormatBase.time_format)

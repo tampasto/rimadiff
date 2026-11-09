@@ -1,6 +1,7 @@
 import click
 
-from rimadiff.command_common import COMMON_EPILOG, config_dir_option
+from rimadiff.command_common import (
+    COMMON_EPILOG, config_dir_option, history_path_option)
 from rimadiff.config_reader import ConfigReader
 from rimadiff.renderer import Renderer
 
@@ -28,8 +29,9 @@ from rimadiff.renderer import Renderer
     help='Name of user setup, using "default" if not given'
     )
 @config_dir_option
+@history_path_option
 @click.pass_context
-def cli(ctx, table, force_download, user_setup, config_dir):
+def cli(ctx, table, force_download, user_setup, config_dir, history_path):
     """
     Compare OSRS game hiscores in terminal.
 
@@ -70,7 +72,7 @@ def cli(ctx, table, force_download, user_setup, config_dir):
     if len(table_names) == 0:
         table_names.append('skill')
 
-    config = ConfigReader(config_dir)
+    config = ConfigReader(config_dir, history_path)
     config.ensure_config()
     config.read()
     is_valid, valid_names = config.check_user_setup(user_setup)
@@ -124,16 +126,16 @@ def _parse_table_names(ctx, args):
     return table_names
 
 
-def _flag_tables(len_, names, table_names, valid, long_name_list, msgs):
+def _flag_tables(len_, args, table_names, valid, long_name_list, msgs):
     no_table = []
-    for nm in names:
-        name = nm
+    for arg in args:
+        name = arg
         if len_ == 'short':
-            name = valid.get(nm.lower())
+            name = valid.get(arg.lower())
             if not name:
                 no_table.append(name)
                 continue
-            if nm.upper() == nm:
+            if arg.upper() == arg:
                 name += '-diff'
         elif name not in valid:
             no_table.append(name)
@@ -146,13 +148,13 @@ def _flag_tables(len_, names, table_names, valid, long_name_list, msgs):
         else:
             table_names.append(name)
     if no_table:
-        msgs.append(_err_format(len_, no_table, names, valid))
+        msgs.append(_err_format(len_, no_table, args, valid))
 
 
-def _err_format(len_, no_table, orig, valid):
+def _err_format(len_, no_table, args, valid):
     if len_ == 'short':
         np = 'table argument'
-        vals = repr(orig)
+        vals = repr(args)
         valid_text += (
             ' '.join(valid) + ' '
             + ' '.join(c.upper() for c in valid)

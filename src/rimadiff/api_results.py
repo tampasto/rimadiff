@@ -7,23 +7,29 @@ class APIResults(ColourBase):
     def __init__(self, data_tuple):
         self.data_tuple = data_tuple
 
-    def echo(self, setup):
-        (
-            success_users,
-            fail_users,
-            fail_errors,
-            bad_json_users,
-            wrong_user_data,
-            non_numeric_categories,
-            non_int_categories
-        ) = self.data_tuple
+    def echo_success(self, setup):
+        success_users = self.data_tuple[0]
 
-        user_map = setup.user_orig.get
+        user_map = setup.user_display.get
         if len(success_users):
             click.echo(
                 'Downloaded: '
                 + ', '.join(map(user_map, success_users)) + '\n'
                 )
+
+    def echo_errors(self, setup):
+        (
+            _,
+            fail_users,
+            fail_errors,
+            bad_json_users,
+            wrong_user_data,
+        ) = self.data_tuple
+
+        user_map = setup.user_display.get
+        if (len(fail_users) or fail_errors.total() or len(bad_json_users)
+            or len(wrong_user_data)):
+            click.echo()
 
         if len(fail_users):
             self.error(
@@ -48,19 +54,3 @@ class APIResults(ColourBase):
                 click.echo(
                     f'  Requested {user_map(user)}, got {user_response}')
             click.echo()
-
-        numeric_errs = (
-            (non_numeric_categories, 'numeric'),
-            (non_int_categories, 'integer')
-            )
-        for num_dict, label in numeric_errs:
-            if len(num_dict) == 0:
-                continue
-            self.warning(f'The API returned non-{label} datapoints for:')
-            cat_header = {c.category: c.header for c in HistoryManager.CATEGORIES}
-            for category, value_counter in num_dict.items():
-                vals = ', '.join(
-                    repr(val) + ('' if count == 1 else f' (x{count})')
-                    for val, count in value_counter.items()
-                    )
-                click.echo(f'  {cat_header[category]}: {vals}')

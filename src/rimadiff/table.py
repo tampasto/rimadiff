@@ -29,6 +29,7 @@ class Table(ColourBase):
         self.styled_column = {}
 
     def add_row(self, row):
+        row = list(row)
         col_width = self._column_width
         if col_width is None:
             self._column_width = [len(c.text) for c in row]

@@ -1,19 +1,19 @@
+import math
 import sqlite3
+import textwrap
+from collections import namedtuple
 from contextlib import AbstractContextManager
-from pathlib import PurePath
+from itertools import chain, islice, repeat
+from pathlib import Path
 
-from rimadiff.category import Category
+from rimadiff.categories import (
+    api_categories, data_categories, label_categories)
 
 
 class HistoryManager(AbstractContextManager):
-    CATEGORIES = (
-        Category('skill', 0, 'Skill level'),
-        Category('xp', 1, 'Skill xp'),
-        Category('skill-rank', 2, 'Skill rank'),
-        Category('activity', 3, 'Activity'),
-        Category('activity-rank', 4, 'Activity rank')
-        )
-    SCHEMA_PATH = PurePath(__file__).parent / 'history_schema.sql'
+    SCHEMA_FILE = 'history_schema.sql'
+
+    # CONTEXT MANAGER
 
     def __init__(self, db_path):
         self.db_path = db_path
@@ -25,15 +25,16 @@ class HistoryManager(AbstractContextManager):
         return self
 
     def open(self):
-        write_schema = not self.history_exists()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        write_schema = not self.db_path.exists()
 
         self.db = sqlite3.connect(self.db_path)
         self.cursor = self.db.cursor()
         cur = self.cursor
         cur.execute('PRAGMA foreign_keys = ON')
         if write_schema:
-            sql = self._get_schema_script()
+            path = Path(__file__).parent / HistoryManager.SCHEMA_FILE
+            with path.open('r', encoding='utf-8') as fp:
+                sql = fp.read()
             cur.executescript(sql)
 
     def __exit__(self, exc_type, exc_value, traceback):
@@ -44,256 +45,341 @@ class HistoryManager(AbstractContextManager):
         self.cursor.close()
         self.db.close()
 
-    def history_exists(self):
-        return self.db_path.exists()
+    # DATA READING
 
-    def _get_schema_script(self):
-        category_comment = ', '.join(
-            f'{c.category}: {c.header}' for c in HistoryManager.CATEGORIES)
-        with open(type(self).SCHEMA_PATH, 'r', encoding='utf-8') as fp:
-            sql = fp.read().format(category_comment=category_comment)
-        return sql
-
-    def sort_users(self, users_set):
-        """Sort db users for UserData pk considerations."""
-        user_id = self.get_user_id_dict()
-        db_users = sorted([(user_id[u], u) for u in users_set if u in user_id])
-        new_users = sorted([u for u in users_set if u not in user_id])
-        return db_users, new_users
-
-    def read_data(self, date_ordinal, user_ids, categories):
-        # user_db_data[user_id][category][label_id] = value
-        # user_history_time[user_id] = (time, timezone)
+    def read_data(self, date_ordinal, user_ids, data_cat_ids):
+        # user_data [user_id] [data_category_id] [label] = value
         in_ = self._in_with_placeholders
-        sql_data = (
-            'SELECT user_id, label_category, label_id, value '
-            'FROM UserData '
-            f'WHERE date_ordinal = ? AND user_id {in_(user_ids)} '
-                f'AND label_category {in_(categories)}'
-            )
-        ph_data = (date_ordinal, *user_ids, *categories)
-        rows_data = self._query_all(sql_data, ph_data, arraysize=300)
-        if len(rows_data) == 0:
-            return {}, {}
+        sql = self._format_sql(f'''
+            SELECT S.user_id, D.data_category, L.name, D.value
+            FROM Snapshot AS S
+            INNER JOIN Data AS D
+                ON S.date_ordinal = ?
+                AND S.user_id {in_(user_ids)}
+                AND S.id = D.snapshot
+                AND D.data_category {in_(data_cat_ids)}
+            LEFT JOIN Label AS L ON D.label = L.id
+            ''')
+        ph = (date_ordinal, *user_ids, *data_cat_ids)
+        rows_iter = self._query_iter(sql, ph)
+        user_data = self._rows_to_dict(rows_iter)
+        return user_data
 
-        user_db_data = {}
-        for user_id in user_ids:
-            cat_dict = {}
-            for category in categories:
-                label_values = {
-                    id_: value
-                    for u_id, cat, id_, value in rows_data
-                    if u_id == user_id and cat == category
-                    }
-                cat_dict[category] = label_values
-            user_db_data[user_id] = cat_dict
+    def get_user_api_id(self, date_ordinal, user_ids):
+        # user_api_id [user_id] = api_category_id
+        in_ = self._in_with_placeholders
+        sql = self._format_sql(f'''
+            SELECT user_id, api_category
+            FROM Snapshot
+            WHERE date_ordinal = ? AND user_id {in_(user_ids)}
+            ''')
+        ph = (date_ordinal, *user_ids)
+        rows = self._query_all(sql, ph, arraysize=20)
+        user_api_id = dict(rows)
+        return user_api_id
 
-        sql_time = (
-            'SELECT R.user_id, U.name, R.time, R.timezone '
-            'FROM UserDataRequest AS R '
-            'LEFT JOIN User AS U ON R.user_id = U.id '
-            f'WHERE R.date_ordinal = ? AND R.user_id {in_(user_ids)}'
-            )
-        ph_time = (date_ordinal, *user_ids)
-        rows_time = self._query_all(sql_time, ph_time, arraysize=30)
+    def read_data_time(self, date_ordinal, user_ids):
+        # user_history_time[user] = (time, timezone)
+        in_ = self._in_with_placeholders
+        sql = self._format_sql(f'''
+            SELECT U.name, S.time, S.timezone
+            FROM Snapshot AS S
+            INNER JOIN User AS U
+                ON S.date_ordinal = ?
+                AND S.user_id {in_(user_ids)}
+                AND S.user_id = U.id
+            ''')
+        ph = (date_ordinal, *user_ids)
+        row_iter = self._query_iter(sql, ph)
 
         user_history_time = {}
-        for user_id in user_ids:
-            time = timezone = None
-            row = next((r for r in rows_time if r[0] == user_id), None)
-            if row:
-                _, username, time, timezone = row
-            user_history_time[username] = time, timezone
-        return user_db_data, user_history_time
+        for user, time, timezone in row_iter:
+            user_history_time[user] = time, timezone
+        return user_history_time
 
-    def write_data(self, time_tuple, downloaded):
+    def _get_snapshot_id_dict(self, date_ordinal):
+        snapshot_id_dict = {}
+        sql = 'SELECT user_id, id FROM Snapshot WHERE date_ordinal = ?'
+        ph = (date_ordinal,)
+        rows = self._query_all(sql, ph, arraysize=30)
+        snapshot_id_dict = dict(rows)
+        return snapshot_id_dict
+
+    def get_history_snapshots(self):
+        sql = self._format_sql('''
+            SELECT DISTINCT date_ordinal, time, timezone
+            FROM Snapshot
+            ''')
+        rows = self._query_all(sql, arraysize=300)
+
+        snapshots = []
+        ordinals = sorted({r[0] for r in rows})
+        for date_ordinal in ordinals:
+            time_list = []
+            for ordinal, time, timezone in rows:
+                if ordinal != date_ordinal:
+                    continue
+                time_list.append((time, timezone))
+            snapshots.append((date_ordinal, time_list))
+        return snapshots
+
+    def get_info_users(self):
+        count_cols = ('user', 'user_display', 'snapshot_count')
+        CountRow = namedtuple('CountRow', count_cols)
+        counts_sql = self._format_sql('''
+            SELECT Max(U.name), Max(U.display), Count(S.date_ordinal)
+            FROM User AS U
+            INNER JOIN Snapshot AS S ON U.id = S.user_id
+            GROUP BY U.id
+            ''')
+        count_rows = self._query_all(counts_sql, arraysize=50)
+        counts = [CountRow(*r) for r in count_rows]
+
+        latest_cols = (
+            'user', 'date_ordinal', 'time', 'timezone', 'api_cat_id')
+        LatestRow = namedtuple('LatestRow', latest_cols)
+        latest_snapshot_sql = self._format_sql('''
+            WITH latest AS (
+                SELECT
+                    U.id AS user_id,
+                    Max(U.name) AS user_name,
+                    Max(S1.date_ordinal) AS date_ordinal
+                FROM User AS U
+                INNER JOIN Snapshot AS S1 ON U.id = S1.user_id
+                GROUP BY U.id
+            )
+            SELECT
+                L.user_name, L.date_ordinal, S2.time, S2.timezone,
+                S2.api_category
+            FROM latest AS L
+            LEFT JOIN Snapshot AS S2
+                ON L.user_id = S2.user_id
+                AND L.date_ordinal = S2.date_ordinal
+            ''')
+        latest_rows = self._query_all(latest_snapshot_sql)
+        latest_snapshot = [LatestRow(*r) for r in latest_rows]
+
+        return counts, latest_snapshot
+
+    # DATA WRITING
+
+    def write_data(self, time_tuple, downloaded, *, update_info=True):
         # downloaded: APIResponse[]
-        # r.data             [category] [label_id] = value
-        # versions [user_id] [category] [label_id] = version
+        # r.data [data_category_id] [label] = value
+        # label_id_dict [label_category_id] [label] = label_id
 
         date_ordinal, time, timezone = time_tuple
 
-        versions = self._get_label_versions_add_new(downloaded, date_ordinal)
+        (label_id_dict, update_display, update_position
+            ) = self._ensure_label_id(downloaded, date_ordinal)
+
+        if update_info:
+            self._update_label('display', update_display)
+            self._update_label('position', update_position)
+
+        data_label_cat = {
+            dc.id: dc.label_category.id for dc in data_categories}
+        snapshot_id_dict = self._get_snapshot_id_dict(date_ordinal)
 
         # New user_id values are already added to User
         data_rows = []
-        for resp in downloaded:
-            for category, label_values in resp.data.items():
-                for label_id, value in label_values.items():
-                    label_version = versions[resp.user_id][category][label_id]
-                    row = (
-                        date_ordinal, resp.user_id, category, label_id,
-                        label_version, value
-                        )
+        for resp in sorted(downloaded, key=lambda r: r.user_id):
+            user_id, api_id = resp.user_id, resp.api_id
+            url, data = resp.url, resp.data
+
+            snapshot_id = snapshot_id_dict.get(user_id)
+            if not snapshot_id:
+                snapshot_id = self._add_snapshot(
+                    date_ordinal, user_id, api_id, time, timezone, url)
+            else:
+                self._update_snapshot(api_id, snapshot_id, time, timezone, url)
+
+            for data_cat_id, label_values in data.items():
+                label_values = data[data_cat_id]
+                for label, value in label_values.items():
+                    label_cat_id = data_label_cat[data_cat_id]
+                    label_id = label_id_dict[label_cat_id][label]
+                    row = (snapshot_id, label_id, data_cat_id, value)
                     data_rows.append(row)
 
-        user_ids = [r.user_id for r in downloaded]
-        self._remove_redundant_data_rows(date_ordinal, user_ids, data_rows)
+        existing_ss_ids = sorted(snapshot_id_dict.values())
+        should_vacuum = False
+        if existing_ss_ids:
+            self._remove_old_snapshot_data(snapshot_id_dict)
+            should_vacuum = True
 
         cur = self.cursor
-        request_rows = [
-            (date_ordinal, resp.user_id, time, timezone, resp.url)
-            for resp in downloaded
-            ]
-        cur.executemany(
-            'INSERT INTO UserDataRequest ('
-                'date_ordinal, user_id, time, timezone, url'
-            ') '
-            'VALUES (?, ?, ?, ?, ?)'
-            'ON CONFLICT (date_ordinal, user_id) '
-            'DO UPDATE SET '
-                'time = excluded.time, '
-                'timezone = excluded.timezone, '
-                'url = excluded.url',
-            request_rows
-            )
-        cur.executemany(
-            'INSERT INTO UserData ('
-                'date_ordinal, user_id, label_category, label_id, '
-                'label_version, value'
-            ') VALUES (?, ?, ?, ?, ?, ?) '
-            'ON CONFLICT (date_ordinal, user_id, label_category, label_id) '
-            'DO UPDATE SET '
-                'label_version = excluded.label_version, '
-                'value = excluded.value',
-            data_rows
-            )
-        self.db.commit()
+        insert_sql = self._format_sql('''
+            INSERT INTO Data (snapshot, label, data_category, value)
+            VALUES
+            ''')
+        row_ph = '(?, ?, ?, ?)'
 
-    def _get_label_versions_add_new(self, downloaded, date_ordinal):
-        # downloaded: APIResponse[]
-        # r.labels           [category] [label_id] = label
-        # versions [user_id] [category] [label_id] = version
-
-        versions = {}
-        for c in HistoryManager.CATEGORIES:
-            category = c.category
-            id_version = {}
-            id_label_version = self._get_id_label_version_dict(category)
-            for resp in downloaded:
-                user_id = resp.user_id
-                versions.setdefault(user_id, {})
-                versions[user_id].setdefault(category, {})
-
-                label_values = resp.labels[category]
-                for label_id, label in label_values.items():
-                    version = None
-                    try:
-                        version = id_label_version[label_id][label]
-                    except KeyError:
-                        version = self._add_label_version(
-                            category, label_id, label, date_ordinal)
-                        id_label_version.setdefault(label_id, {})
-                        id_label_version[label_id][label] = version
-                    versions[user_id][category][label_id] = version
-        return versions
-
-    def _get_id_label_version_dict(self, category):
-        # id_label_version[label_id][label] = version
-        sql = (
-            'SELECT id, value, version '
-            'FROM Label '
-            'WHERE category = ?'
-            )
-        rows = self._query_all(sql, (category,), arraysize=300)
-
-        id_label_version = {}
-        for id_, label, version in rows:
-            id_label_version.setdefault(id_, {})
-            id_label_version[id_][label] = version
-        return id_label_version
-
-    def _add_label_version(self, category, label_id, label, date_ordinal):
-        cur = self.cursor
-        version = self._column_increment(
-            'Label', 'version', ('category', 'id'), (category, label_id))
-        cur.execute(
-            'INSERT INTO Label ('
-                'category, id, version, value, added_date_ordinal) '
-            'VALUES (?, ?, ?, ?, ?)',
-            (category, label_id, version, label, date_ordinal)
-            )
-        self.db.commit()
-        return version
-
-    def _remove_redundant_data_rows(self, date_ordinal, user_ids, new_rows):
-        # new_rows[] = (date_ordinal, user_id, category, label_id, ...)
-        in_ = self._in_with_placeholders
-        sql = (
-            'SELECT user_id, label_category, label_id '
-            'FROM UserData '
-            f'WHERE date_ordinal = ? AND user_id {in_(user_ids)}'
-            )
-        ph = (date_ordinal, *user_ids)
-        old_rows = self._query_all(sql, ph, arraysize=1000)
-
-        extra = []
-        for user_id, category, label_id in old_rows:
-            if not any(r for r in new_rows
-                if r[1] == user_id and r[2] == category and r[3] == label_id):
-                # Does not exist in new dataset, so plain UPSERT would
-                # leave it dangling
-                extra.append((date_ordinal, user_id, category, label_id))
-        if extra:
-            cur.executemany(
-                'DELETE FROM UserData '
-                'WHERE date_ordinal = ? AND user_id = ? '
-                    'AND label_category = ? AND label_id = ?',
-                extra
+        snapshot_len = math.ceil(len(data_rows) / len(downloaded))
+        row_iter = iter(data_rows)
+        while rows := islice(row_iter, snapshot_len):
+            row_list = list(rows)
+            if not row_list:
+                break
+            sql = (
+                insert_sql + '\n  '
+                + ',\n  '.join(repeat(row_ph, len(row_list)))
                 )
-            self.db.commit()
+            ph = tuple(chain(*row_list))
+            cur.execute(sql, ph)
+        self.db.commit()
+        return should_vacuum
 
-    def update_user_original(self, user_id, user_original):
-        cur = self.cursor
-        cur.execute(
-            'UPDATE User SET name_original = ? WHERE id = ?',
-            (user_original, user_id)
-            )
+    def _remove_old_snapshot_data(self, existing_ss_ids):
+        # new_rows[] = (snapshot_id, label_id, data_cat_id, value)
+        in_ = self._in_with_placeholders
+        del_sql = self._format_sql(f'''
+            DELETE FROM Data
+            WHERE snapshot {in_(existing_ss_ids)}
+            ''')
+        self.cursor.execute(del_sql, tuple(existing_ss_ids))
         self.db.commit()
 
-    def add_user(self, user, user_original, date_ordinal):
-        cur = self.cursor
-        user_id = self._column_increment('User', 'id')
-        cur.execute(
-            'INSERT INTO User (id, name, name_original, added_date_ordinal) '
-            'VALUES (?, ?, ?, ?)',
-            (user_id, user, user_original, date_ordinal)
+    def _add_snapshot(
+        self, date_ordinal, user_id, api_cat_id, time, timezone, url
+    ):
+        sql = self._format_sql('''
+            INSERT INTO Snapshot (
+                date_ordinal, user_id, api_category, time, timezone, url
             )
+            VALUES (?, ?, ?, ?, ?, ?)
+            ''')
+        ph = (date_ordinal, user_id, api_cat_id, time, timezone, url)
+        self.cursor.execute(sql, ph)
         self.db.commit()
-        return user_id
+        return self.cursor.lastrowid
 
-    def _column_increment(self, table, column, filters=None, values=()):
-        cur = self.cursor
-        cur.arraysize = 1
-        filter_sql = ''
-        if filters:
-            filter_sql = (
-                ' WHERE ' + ' AND '.join(f'{col} = ?' for col in filters))
-        cur.execute(f'SELECT Max({column}) FROM {table}{filter_sql}', values)
-        max_value = cur.fetchone()[0]
-        value = 0
-        if max_value is not None:
-            value = max_value + 1
-        return value
+    def _update_snapshot(
+        self, api_cat_id, snapshot_id, time, timezone, url
+    ):
+        sql = self._format_sql('''
+            UPDATE Snapshot
+            SET api_category = ?, time = ?, timezone = ?, url = ?
+            WHERE id = ?
+            ''')
+        ph = (api_cat_id, time, timezone, url, snapshot_id)
+        self.cursor.execute(sql, ph)
+        self.db.commit()
 
-    def get_user_original_dict(self):
-        cur = self.cursor
-        cur.arraysize = 100
-        cur.execute('SELECT name, name_original FROM User')
-        user_original_dict = dict(cur.fetchall())
-        return user_original_dict
+    # LABEL READING
 
-    def get_user_added_date_ordinal_dict(self):
+    def get_label_dict(self, users, date_ordinal):
+        # label_dict = label_dict[label_category_id][label] = display
+        # -> Innermost dict is ordered by position
+        in_ = self._in_with_placeholders
+
+        sql = self._format_sql(f'''
+            SELECT L.label_category, L.name, L.display, L.position
+            FROM User AS U
+            INNER JOIN Snapshot AS S
+                ON U.name {in_(users)}
+                AND U.id = S.user_id
+                AND S.date_ordinal = ?
+            INNER JOIN Data AS D ON S.id = D.snapshot
+            INNER JOIN Label AS L ON D.label = L.id
+            ORDER BY L.label_category
+            ''')
+        ph = (*users, date_ordinal)
+        row_iter = self._query_iter(sql, ph)
+
+        label_dict = {}
+        label_pos_dict = {}
+        display_dict = None
+        position_dict = None
+        last_cat_id = None
+        for label_cat_id, label, display, position in row_iter:
+            if display_dict is None:
+                display_dict = {}
+                position_dict = {}
+            elif label_cat_id != last_cat_id:
+                label_dict[last_cat_id] = display_dict
+                display_dict = {}
+                label_pos_dict[last_cat_id] = position_dict
+                position_dict = {}
+
+            display_dict[label] = display
+            position_dict[label] = position
+            last_cat_id = label_cat_id
+        label_dict[last_cat_id] = display_dict
+        label_pos_dict[last_cat_id] = position_dict
+
+        return label_dict, label_pos_dict
+
+    # LABEL WRITING
+
+    def _ensure_label_id(self, downloaded, date_ordinal):
+        # downloaded: APIResponse[]
+        # r.labels       [label_category_id] [label] = (display, position)
+        # labels_current [label_category_id] [label] = (id, display, position)
+        # label_id_dict  [label_category_id] [label] = label_id
+
+        labels_current = {}
+        for label_cat in label_categories:
+            label_info = {}
+            sql = self._format_sql('''
+                SELECT name, id, display, position
+                FROM Label
+                WHERE label_category = ?
+                ''')
+            ph = (label_cat.id,)
+            for label, id_, display, position in self._query_iter(sql, ph):
+                label_info[label] = (id_, display, position)
+            labels_current[label_cat.id] = label_info
+
+        label_id_dict = {lc.id: {} for lc in label_categories}
+        update_display = set()
+        update_position = set()
+        for resp in downloaded:
+            for label_cat_id, resp_dict in resp.labels.items():
+                lidict = {}
+                for label, (display, position) in resp_dict.items():
+                    try:
+                        cur_tuple = labels_current[label_cat_id][label]
+                    except KeyError:
+                        id_ = self._add_label(
+                            label_cat_id, label, display, position,
+                            date_ordinal
+                            )
+                        new_tuple = id_, display, position
+                        labels_current[label_cat_id][label] = new_tuple
+                    else:
+                        id_, cur_display, cur_position = cur_tuple
+                        if display != cur_display:
+                            update_display.add((display, id_))
+                        if position != cur_position:
+                            update_position.add((position, id_))
+                    lidict[label] = id_
+
+                label_id_dict.setdefault(label_cat_id, {})
+                label_id_dict[label_cat_id].update(lidict)
+
+        return label_id_dict, update_display, update_position
+
+    def _add_label(self, label_cat_id, label, display, position, date_ordinal):
         cur = self.cursor
-        cur.arraysize = 100
-        user_added_dict = {}
-        try:
-            cur.execute('SELECT name, added_date_ordinal FROM User')
-        except sqlite3.OperationalError:
-            pass
-        else:
-            user_added_dict = dict(cur.fetchall())
-        return user_added_dict
+        sql = self._format_sql('''
+            INSERT INTO Label (
+                label_category, name, display, position, added_date_ordinal)
+            VALUES (?, ?, ?, ?, ?)
+            ''')
+        ph = (label_cat_id, label, display, position, date_ordinal)
+        cur.execute(sql, ph)
+        self.db.commit()
+        return cur.lastrowid
+
+    def _update_label(self, col_name, update_ph):
+        if not update_ph:
+            return
+        sql = f'UPDATE Label SET {col_name} = ? WHERE id = ?'
+        self.cursor.executemany(sql, update_ph)
+        self.db.commit()
+
+    # USER
 
     def get_user_id_dict(self):
         cur = self.cursor
@@ -302,61 +388,137 @@ class HistoryManager(AbstractContextManager):
         user_id_dict = dict(cur.fetchall())
         return user_id_dict
 
-    def get_label_dict(self, users, date_ordinal, categories):
-        # label_dict = label_dict[category][label_id] = label
-        label_dict = {n: {} for n in categories}
+    def get_user_display_dict(self):
+        cur = self.cursor
+        cur.arraysize = 100
+        cur.execute('SELECT name, display FROM User')
+        user_display_dict = dict(cur.fetchall())
+        return user_display_dict
 
-        # Get every (category, label_id) for all users on specified date
+    def get_user_added_date_ordinal_dict(self):
+        cur = self.cursor
+        cur.arraysize = 100
+        cur.execute('SELECT name, added_date_ordinal FROM User')
+        user_added_dict = dict(cur.fetchall())
+        return user_added_dict
+
+    def add_user(self, user, user_display, date_ordinal):
+        cur = self.cursor
+        sql = self._format_sql('''
+            INSERT INTO User (name, display, added_date_ordinal)
+            VALUES (?, ?, ?)
+            ''')
+        ph = (user, user_display, date_ordinal)
+        cur.execute(sql, ph)
+        self.db.commit()
+        return cur.lastrowid
+
+    def update_user_display(self, user_id, user_display):
+        cur = self.cursor
+        cur.execute(
+            'UPDATE User SET display = ? WHERE id = ?',
+            (user_display, user_id)
+            )
+        self.db.commit()
+
+    # CATEGORIES
+
+    def ensure_label_data_category_ids(self):
+        self._ensure_label_category_ids()
+        self._ensure_data_category_ids()
+
+    def _ensure_label_category_ids(self):
+        sql = f'SELECT name, id FROM LabelCategory'
+        rows = self._query_all(sql, arraysize=2)
+        id_dict = dict(rows)
+        for cat in label_categories:
+            id_ = id_dict.get(cat.name)
+            if not id_:
+                id_ = self._add_category(
+                    'LabelCategory', cat.name, cat.display)
+            cat.id = id_
+
+    def _ensure_data_category_ids(self):
+        sql = f'SELECT name, label_category, id FROM DataCategory'
+        rows = self._query_all(sql, arraysize=5)
+        for cat in data_categories:
+            match_tuple = cat.name, cat.label_category.id
+            try:
+                row = next(r for r in rows if r[:2] == match_tuple)
+            except StopIteration:
+                extra = {'label_category': cat.label_category.id}
+                id_ = self._add_category(
+                    'DataCategory', cat.name, cat.display, extra)
+            else:
+                id_ = row[2]
+            cat.id = id_
+
+    def ensure_api_category_ids(self, api_names=None):
+        if len(api_categories) == 0:
+            # No API URL config, no can do
+            return
+
         in_ = self._in_with_placeholders
+        sql = 'SELECT name, id FROM APICategory'
+        ph = ()
+        if api_names:
+            sql += f'\nWHERE name {in_(api_names)}'
+            ph = tuple(api_names)
+            names = api_names
+        rows = self._query_all(sql, ph)
+        if not api_names:
+            names = [r[0] for r in rows]
 
-        sql_cat_id = (
-            'SELECT DISTINCT D.label_category, D.label_id '
-            'FROM User AS U '
-            'LEFT JOIN UserData AS D ON U.id = D.user_id '
-            f'WHERE U.name {in_(users)} AND D.date_ordinal = ? '
-            f'AND D.label_category {in_(categories)}'
+        id_dict = dict(rows)
+        api_cats = sorted(
+            (next(c for c in api_categories if c.name == n)
+            for n in names),
+            key=lambda c: api_categories.index(c)
             )
-        ph_cat_id = (*users, date_ordinal, *categories)
-        cat_id = self._query_all(sql_cat_id, ph_cat_id, arraysize=300)
+        for api_cat in api_cats:
+            id_ = id_dict.get(api_cat.name)
+            if not id_:
+                id_ = self._add_category(
+                    'APICategory', api_cat.name, api_cat.display)
+            api_cat.id = id_
 
-        # Get label versions preferring first users
-        user_id_dict = self.get_user_id_dict()
-        sql_label = (
-            'SELECT L.id, L.value '
-            'FROM UserData AS D '
-            'INNER JOIN Label AS L '
-                'ON D.date_ordinal = ? AND D.user_id = ? '
-                'AND D.label_category = ? AND D.label_id IN ({id_sql}) '
-                'AND D.label_category = L.category AND D.label_id = L.id '
-                'AND D.label_version = L.version '
-            )
-        for user in users:
-            user_id = user_id_dict[user]
-            left_to_query = [
-                (category, label_id)
-                for category, label_id in cat_id
-                if label_dict[category].get(label_id) is None
-                ]
-            if not left_to_query:
-                break
+    def _add_category(self, table, name, display, extra={}):
+        dep_col = ', '.join([*extra, ''])
+        dep_ph = ', '.join([*('?'*len(extra)), ''])
+        sql = self._format_sql(f'''
+            INSERT INTO {table} ({dep_col}name, display)
+            VALUES ({dep_ph}?, ?)
+            ''')
+        ph = (*extra.values(), name, display)
+        cur = self.cursor
+        cur.execute(sql, ph)
+        self.db.commit()
+        return cur.lastrowid
 
-            query_categories = sorted(set(r[0] for r in left_to_query))
-            for category in query_categories:
-                category_dict = label_dict[category]
+    # GENERAL DATABASE
 
-                label_ids = sorted(
-                    r[1] for r in left_to_query if r[0] == category)
-                id_sql = ', '.join('?' * len(label_ids))
-                sql = sql_label.format(id_sql=id_sql)
+    def vacuum(self):
+        self.cursor.execute('VACUUM')
 
-                pc_label = (date_ordinal, user_id, category, *label_ids)
+    # SQL UTILITIES
 
-                label_rows = self._query_all(sql, pc_label)
+    def _format_sql(self, sql):
+        return textwrap.dedent(sql).strip()
 
-                for label_id, label in label_rows:
-                    category_dict[label_id] = label
+    def _in_with_placeholders(self, values):
+        return 'IN (' + ', '.join('?' * len(values)) + ')'
 
-        return label_dict
+    def _query_iter(self, sql, placeholders=(), *, arraysize=1):
+        cur = self.cursor
+        if arraysize is not None:
+            cur.arraysize = arraysize
+        row_iter = cur.execute(sql, placeholders)
+        return row_iter
+
+    def _query_all(self, sql, placeholders=(), *, arraysize=None):
+        self._query_iter(sql, placeholders, arraysize=arraysize)
+        rows = self.cursor.fetchall()
+        return rows
 
     def _fetch_row(self, cur, columns=1):
         row = cur.fetchone()
@@ -369,59 +531,16 @@ class HistoryManager(AbstractContextManager):
             return row[0]
         return row
 
-    def _query_all(self, sql, placeholders=(), *, arraysize=None):
-        cur = self.cursor
-        if arraysize is not None:
-            cur.arraysize = arraysize
-        cur.execute(sql, placeholders)
-        rows = cur.fetchall()
-        return rows
-
-    def _in_with_placeholders(self, values):
-        return 'IN (' + ', '.join('?' * len(values)) + ')'
-
-    def get_history_snapshots(self):
-        sql = (
-            'SELECT DISTINCT date_ordinal, time, timezone '
-            'FROM UserDataRequest'
-            )
-        rows = self._query_all(sql, arraysize=300)
-
-        snapshots = []
-        ordinals = sorted({r[0] for r in rows})
-        for date_ordinal in ordinals:
-            snapshots.append((
-                date_ordinal,
-                [(r[1], r[2]) for r in rows if r[0] == date_ordinal]
-                ))
-        return snapshots
-
-    def get_info_users(self):
-        cur = self.cursor
-        cur.arraysize = 50
-        cur.execute(
-            'SELECT Max(U.name), Max(U.name_original), Count(R.date_ordinal) '
-            'FROM User AS U '
-            'LEFT JOIN UserDataRequest AS R ON U.id = R.user_id '
-            'GROUP BY U.id'
-            )
-        counts = cur.fetchall()
-        cur.execute(
-            'WITH latest AS ( '
-                'SELECT '
-                    'U.id, Max(U.name) AS username, '
-                    'Max(R1.date_ordinal) AS date_ordinal '
-                'FROM User AS U '
-                'LEFT JOIN UserDataRequest AS R1 ON U.id = R1.user_id '
-                'GROUP BY U.id '
-            ') '
-            'SELECT L.username, L.date_ordinal, R2.time, R2.timezone '
-            'FROM latest AS L '
-            'LEFT JOIN UserDataRequest AS R2 '
-                'ON L.id = R2.user_id AND L.date_ordinal = R2.date_ordinal'
-            )
-        latest_snapshot = cur.fetchall()
-        return counts, latest_snapshot
-
-    def vacuum(self):
-        self.cursor.execute('VACUUM')
+    def _rows_to_dict(self, rows_iter):
+        row_dict = {}
+        for row in rows_iter:
+            col_penultimate = len(row) - 2
+            col_dict = row_dict
+            for col_i, val in enumerate(row):
+                if col_i == col_penultimate:
+                    col_dict[val] = row[-1]
+                    break
+                else:
+                    col_dict.setdefault(val, {})
+                    col_dict = col_dict[val]
+        return row_dict

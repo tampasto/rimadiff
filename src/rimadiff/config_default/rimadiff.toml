@@ -1,0 +1,8 @@
+colour_scheme = 'default'
+
+[user-setup.default]
+users = ['Faux', 'Manked', 'Mote Plox', 'Mr Mammal', 'Herbiboar']
+rima = 'Faux'
+user_alias = {'Manked' = 'PKer', 'Mote Plox' = 'Historian'}
+default_api = 'main'
+user_api = {'Herbiboar' = 'ultimate'}
