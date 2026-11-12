@@ -1,10 +1,14 @@
 class FormatBase:
+    date_format = '%Y-%m-%d'
     time_format = '%Y-%m-%d %H:%M'
 
     def format_number(self, value, show_plus=False):
         sign = ('+' if show_plus and value > 0 else '')
         text = f'{value:{sign},}'.replace(',', ' ')
         return text
+
+    def format_percent(self, num, precision=0):
+        return f'{num:_.{precision}%}'.replace('_', ' ')
 
     def format_size(self, size):
         if size/10 > 1024**3:
@@ -14,6 +18,9 @@ class FormatBase:
         elif size/10 > 1024:
             return f'{size//1024}k'
         return f'{size}'
+
+    def format_date(self, dt):
+        return dt.strftime(FormatBase.date_format)
 
     def format_time(self, dt):
         return dt.strftime(FormatBase.time_format)

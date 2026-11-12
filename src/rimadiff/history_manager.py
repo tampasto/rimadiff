@@ -78,6 +78,27 @@ class HistoryManager(AbstractContextManager):
         user_api_id = dict(rows)
         return user_api_id
 
+    def get_user_snapshot_id_dict(self, date_ordinal, user_api_ids):
+        # user_api_ids[] = (user_id, api_id)
+        user_snapshot_id_dict = {}
+
+        sql = self._format_sql('''
+            SELECT user_id, id FROM Snapshot
+            WHERE date_ordinal = ? AND (
+            ''')
+        user_sql = '\n    {}user_id = ? AND api_category = ?'
+        for row_i in range(len(user_api_ids)):
+            op = ('' if row_i == 0 else 'OR ')
+            sql += user_sql.format(op)
+        sql += '\n)'
+
+        flat_ph = list(chain(*user_api_ids))
+        ph = (date_ordinal, *flat_ph)
+
+        rows = self._query_all(sql, ph, arraysize=30)
+        user_snapshot_id_dict = dict(rows)
+        return user_snapshot_id_dict
+
     def read_data_time(self, date_ordinal, user_ids):
         # user_history_time[user] = (time, timezone)
         in_ = self._in_with_placeholders
@@ -96,14 +117,6 @@ class HistoryManager(AbstractContextManager):
         for user, time, timezone in row_iter:
             user_history_time[user] = time, timezone
         return user_history_time
-
-    def _get_snapshot_id_dict(self, date_ordinal):
-        snapshot_id_dict = {}
-        sql = 'SELECT user_id, id FROM Snapshot WHERE date_ordinal = ?'
-        ph = (date_ordinal,)
-        rows = self._query_all(sql, ph, arraysize=30)
-        snapshot_id_dict = dict(rows)
-        return snapshot_id_dict
 
     def get_history_snapshots(self):
         sql = self._format_sql('''
@@ -161,6 +174,7 @@ class HistoryManager(AbstractContextManager):
 
         return counts, latest_snapshot
 
+
     # DATA WRITING
 
     def write_data(self, time_tuple, downloaded, *, update_info=True):
@@ -179,7 +193,9 @@ class HistoryManager(AbstractContextManager):
 
         data_label_cat = {
             dc.id: dc.label_category.id for dc in data_categories}
-        snapshot_id_dict = self._get_snapshot_id_dict(date_ordinal)
+        user_api_ids = [(r.user_id, r.api_id) for r in downloaded]
+        user_snapshot_id_dict = self.get_user_snapshot_id_dict(
+            date_ordinal, user_api_ids)
 
         # New user_id values are already added to User
         data_rows = []
@@ -187,7 +203,7 @@ class HistoryManager(AbstractContextManager):
             user_id, api_id = resp.user_id, resp.api_id
             url, data = resp.url, resp.data
 
-            snapshot_id = snapshot_id_dict.get(user_id)
+            snapshot_id = user_snapshot_id_dict.get(user_id)
             if not snapshot_id:
                 snapshot_id = self._add_snapshot(
                     date_ordinal, user_id, api_id, time, timezone, url)
@@ -202,10 +218,10 @@ class HistoryManager(AbstractContextManager):
                     row = (snapshot_id, label_id, data_cat_id, value)
                     data_rows.append(row)
 
-        existing_ss_ids = sorted(snapshot_id_dict.values())
         should_vacuum = False
-        if existing_ss_ids:
-            self._remove_old_snapshot_data(snapshot_id_dict)
+        existing_snapshot_ids = sorted(user_snapshot_id_dict.values())
+        if existing_snapshot_ids:
+            self._remove_old_snapshot_data(existing_snapshot_ids)
             should_vacuum = True
 
         cur = self.cursor
@@ -230,14 +246,13 @@ class HistoryManager(AbstractContextManager):
         self.db.commit()
         return should_vacuum
 
-    def _remove_old_snapshot_data(self, existing_ss_ids):
-        # new_rows[] = (snapshot_id, label_id, data_cat_id, value)
+    def _remove_old_snapshot_data(self, snapshot_ids):
         in_ = self._in_with_placeholders
         del_sql = self._format_sql(f'''
             DELETE FROM Data
-            WHERE snapshot {in_(existing_ss_ids)}
+            WHERE snapshot {in_(snapshot_ids)}
             ''')
-        self.cursor.execute(del_sql, tuple(existing_ss_ids))
+        self.cursor.execute(del_sql, tuple(snapshot_ids))
         self.db.commit()
 
     def _add_snapshot(
@@ -265,6 +280,7 @@ class HistoryManager(AbstractContextManager):
         ph = (api_cat_id, time, timezone, url, snapshot_id)
         self.cursor.execute(sql, ph)
         self.db.commit()
+
 
     # LABEL READING
 
@@ -309,6 +325,7 @@ class HistoryManager(AbstractContextManager):
         label_pos_dict[last_cat_id] = position_dict
 
         return label_dict, label_pos_dict
+
 
     # LABEL WRITING
 
@@ -379,6 +396,7 @@ class HistoryManager(AbstractContextManager):
         self.cursor.executemany(sql, update_ph)
         self.db.commit()
 
+
     # USER
 
     def get_user_id_dict(self):
@@ -420,6 +438,7 @@ class HistoryManager(AbstractContextManager):
             (user_display, user_id)
             )
         self.db.commit()
+
 
     # CATEGORIES
 
@@ -478,9 +497,14 @@ class HistoryManager(AbstractContextManager):
         for api_cat in api_cats:
             id_ = id_dict.get(api_cat.name)
             if not id_:
-                id_ = self._add_category(
-                    'APICategory', api_cat.name, api_cat.display)
+                id_ = self.add_api_category(api_cat.name, api_cat.display)
             api_cat.id = id_
+
+    def get_api_category_id_dict(self):
+        sql = 'SELECT name, id FROM APICategory'
+        rows = self._query_all(sql)
+        api_category_id_dict = dict(rows)
+        return api_category_id_dict
 
     def _add_category(self, table, name, display, extra={}):
         dep_col = ', '.join([*extra, ''])
@@ -495,10 +519,16 @@ class HistoryManager(AbstractContextManager):
         self.db.commit()
         return cur.lastrowid
 
+    def add_api_category(self, api_name, api_display):
+        id_ = self._add_category('APICategory', api_name, api_display)
+        return id_
+
+
     # GENERAL DATABASE
 
     def vacuum(self):
         self.cursor.execute('VACUUM')
+
 
     # SQL UTILITIES
 

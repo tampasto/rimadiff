@@ -1,0 +1,15 @@
+# See valid percent placeholders from
+# https://docs.python.org/3.11/library/datetime.html#strftime-and-strptime-format-codes
+
+date = '%Y-%m-%d'
+time = '%Y-%m-%d %H:%M'
+
+# Command import uses the following values to read dates from file paths
+# These must be ordered from the most specific to the least specific
+# The only supported placeholders are %Y %m %d %H %M %S %z
+import_dates = [
+    '%Y-%m-%dT%H:%M:%S%z', # ISO format
+    '%Y-%m-%d %H:%M%z',
+    '%Y-%m-%d %H:%M',
+    '%Y-%m-%d',
+]

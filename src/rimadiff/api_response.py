@@ -8,9 +8,12 @@ class APIResponse(ColourBase):
     def __init__(self, json_obj, api_id, url=None):
         self.response_user = str(json_obj.get('name')).strip()
 
-        # json_url is a special case for data export files
+        # Special keys for exported files
         json_url = json_obj.get('url')
         self.url = url or json_url
+        if not json_url and not url:
+            self.url = ''
+        self.api_name = json_obj.get('api_name')
 
         data, labels = self._parse_json_object(json_obj)
 

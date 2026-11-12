@@ -6,13 +6,15 @@ from rimadiff.config_reader import ConfigReader
 from rimadiff.renderer import Renderer
 
 
-@click.group(
-    invoke_without_command=True,
-    context_settings={'help_option_names': ['-h', '--help']},
-    epilog=COMMON_EPILOG.rstrip() + """
+rimadiff_epilog = """
       RIMADIFF_USER_SETUP  Default value for --user-setup
       RIMADIFF_TABLE       Default value for --table
     """
+
+@click.group(
+    invoke_without_command=True,
+    context_settings={'help_option_names': ['-h', '--help']},
+    epilog=(COMMON_EPILOG.rstrip() + rimadiff_epilog)
     )
 @click.option(
     '-t', '--table', multiple=True,

@@ -29,31 +29,31 @@ class ColourBase:
                     sdict |= sk_sdict
         return sdict
 
-    def error(self, msg_err, extra=''):
+    def error(self, msg_err, extra='', nl2=True):
         msg = str(msg_err)
         if isinstance(msg_err, Exception):
             msg = f'{type(msg_err).__name__}: {msg_err}'
 
         sdict = self.get_style('message', 'error')
-        styled = self.click_style(f'{msg}\n', sdict)
+        styled = self.click_style(f'{msg}', sdict) + ('\n' if nl2 else '')
         click.echo(styled)
 
         if extra:
             click.echo(f'{extra}\n')
 
-    def quit_error(self, msg_err, extra=''):
+    def quit_error(self, msg_err, extra='', nl2=True):
         click.echo()
-        self.error(msg_err, extra)
+        self.error(msg_err, extra, nl2)
         quit()
 
-    def warning(self, msg):
+    def warning(self, msg, nl2=True):
         sdict = self.get_style('message', 'warning')
-        styled = self.click_style(f'{msg}\n', sdict)
+        styled = self.click_style(f'{msg}', sdict) + ('\n' if nl2 else '')
         click.echo(styled)
 
-    def info(self, msg):
+    def info(self, msg, nl2=True):
         sdict = self.get_style('message', 'info')
-        styled = self.click_style(f'{msg}\n', sdict)
+        styled = self.click_style(f'{msg}', sdict) + ('\n' if nl2 else '')
         click.echo(styled)
 
     def click_style(self, text, sdict):

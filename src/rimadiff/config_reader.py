@@ -16,7 +16,8 @@ class ConfigReader(ColourBase):
     CONFIG_FILES = {
         'General': 'rimadiff.toml',
         'Colour': 'colour.toml',
-        'API URL': 'api_url.toml'
+        'API URL': 'api_url.toml',
+        'Formatting': 'formatting.toml'
         }
     HISTORY_FILE = 'history.db'
     DEFAULT_DIR_PATH = 'config_default'
@@ -26,6 +27,12 @@ class ConfigReader(ColourBase):
         'init-config" or run the base command "rimadiff" and use the '
         'default configuration to get a demo.\n'
         )
+    DEFAULT_IMPORT_DATE_FORMATS = [
+        '%Y-%m-%dT%H:%M:%S%z',
+        '%Y-%m-%d %H:%M%z',
+        '%Y-%m-%d %H:%M',
+        '%Y-%m-%d'
+        ]
 
     ERROR_PATH = '{} configuration path:\n  {}'
     NEW_CONFIG_INFO = 'Wrote a new {} configuration file in:\n  {}'
@@ -39,7 +46,6 @@ class ConfigReader(ColourBase):
         # General config
         self.user_setup: dict[str, UserSetup] | None = None
         self.colour_scheme: str | None = None
-        # time_format reassigns FormatBase.time_format (str)
 
         # Colour config reassigns ColourBase.scheme (dict)
 
@@ -47,12 +53,17 @@ class ConfigReader(ColourBase):
         self.api_url: dict[str, APIUrl] | None = None
         self._correct_api_names = None
 
+        # Formatting config
+        # date_format reassigns FormatBase.date_format (str)
+        # time_format reassigns FormatBase.time_format (str)
+        self.import_date_formats: list[str] = (
+            ConfigReader.DEFAULT_IMPORT_DATE_FORMATS)
+
         self._ensured_files = None
 
     def _determine_config_paths(self, dirs, config_dir):
         paths = {}
         if isinstance(config_dir, Path):
-            config_dir.mkdir(parents=True, exist_ok=True)
             for name, filename in ConfigReader.CONFIG_FILES.items():
                 paths[name] = config_dir / filename
         else:
@@ -76,13 +87,10 @@ class ConfigReader(ColourBase):
                 if file_tuple:
                     self._ensured_files.append(file_tuple)
 
-    def complain_if_no_config(self):
-        if self._no_config:
-            click.echo(ConfigReader.COMPLAIN_NO_CONFIG)
-
     def _write_default_config(self, name, dest):
-        default_path = Path(__file__).parent / ConfigReader.DEFAULT_DIR_PATH
-        source_path = default_path / dest.name
+        source_dir = Path(__file__).parent / ConfigReader.DEFAULT_DIR_PATH
+        source_path = source_dir / dest.name
+        dest.parent.mkdir(parents=True, exist_ok=True)
         try:
             with (source_path.open('rb') as default_config,
                 dest.open('wb') as new_config):
@@ -93,12 +101,19 @@ class ConfigReader(ColourBase):
         name_lc = self._config_name_lower(name)
         return name_lc, dest
 
+    def complain_if_no_config(self):
+        if self._no_config:
+            click.echo(ConfigReader.COMPLAIN_NO_CONFIG)
+
     def read(self):
+        # Second value means throw error if reading fails but ignore if
+        # file does not exist
         # Ordered as ConfigReader.CONFIG_FILES
         readers = (
             (self._read_general_config, True),
             (self._read_colour_config, False),
-            (self._read_api_url_config, True)
+            (self._read_api_url_config, True),
+            (self._read_formatting_config, False)
             )
 
         for (name, path), (read, required) in zip(self.paths.items(), readers):
@@ -119,18 +134,30 @@ class ConfigReader(ColourBase):
                 setup.validate_api_names(setup_name, self._correct_api_names)
 
     def _read_general_config(self, config_name, toml):
-        keys = ('colour_scheme', 'time_format', 'user-setup')
-        values = self._read_keys(config_name, toml, keys)
-        colour_scheme, time_format, user_setup = values
-        self.user_setup = {
-            name: UserSetup(setup, self.paths[config_name])
-            for name, setup in user_setup.items()
-            }
-        self.colour_scheme = colour_scheme or 'default'
-        if time_format:
-            FormatBase.time_format = time_format
+        keys = 'user-setup', 'colour_scheme'
+        v = self._read_keys(config_name, toml, keys)
+        user_setup, colour_scheme = v
+
+        if (isinstance(user_setup, dict)
+            and all(isinstance(t, dict) for t in user_setup.values())):
+            self.user_setup = {
+                name: UserSetup(setup, self.paths[config_name])
+                for name, setup in user_setup.items()
+                }
+        else:
+            self._complain_key(
+                'user-setup', 'table with name tables', config_name)
+
+        if isinstance(colour_scheme, str):
+            self.colour_scheme = colour_scheme
+        elif colour_scheme is not None:
+            self._complain_key('colour_scheme', 'string', config_name)
+        else:
+            self.colour_scheme = 'default'
 
     def _read_colour_config(self, config_name, toml):
+        if not self.colour_scheme:
+            return
         scheme = toml.get(self.colour_scheme)
         if not isinstance(scheme, dict):
             self.warning(f'No such colour scheme {self.colour_scheme!r}.')
@@ -159,12 +186,26 @@ class ConfigReader(ColourBase):
             correct_names.append(name)
         self._correct_api_names = correct_names
 
-    def _get_required(self, subdict, key, config_name, pos):
-        value = subdict.get(key)
-        if not value:
-            msg = f'Missing required key {key!r} in configuration at {pos!r}.'
-            self.quit_config_error(msg, config_name)
-        return value
+    def _read_formatting_config(self, config_name, toml):
+        keys = 'date', 'time', 'import_dates'
+        v = self._read_keys(config_name, toml, keys)
+        date_, time, import_dates = v
+
+        if isinstance(date_, str):
+            FormatBase.date_format = date_
+        elif date_ is not None:
+            self._complain_key('date', 'string', config_name)
+
+        if isinstance(time, str):
+            FormatBase.time_format = time
+        elif time is not None:
+            self._complain_key('time', 'string', config_name)
+
+        if (isinstance(import_dates, list)
+            and all(isinstance(v, str) for v in import_dates)):
+            self.import_date_formats = import_dates
+        elif import_dates is not None:
+            self._complain_key('import_dates', 'list of strings', config_name)
 
     def _read_keys(self, config_name, toml, keys):
         values = [toml.get(k) for k in keys]
@@ -172,10 +213,21 @@ class ConfigReader(ColourBase):
         if unrecognized:
             msg = (
                 f'Unrecognized keys in configuration file:\n  '
-                + sorted(unrecognized)
+                + ', '.join(sorted(unrecognized))
                 )
             self.quit_config_error(msg, config_name)
         return tuple(values)
+
+    def _complain_key(self, key, type_, config_name):
+            msg = f'Key {key!r} must be a {type_}.'
+            self.quit_config_error(msg, config_name)
+
+    def _get_required(self, subdict, key, config_name, pos):
+        value = subdict.get(key)
+        if not value:
+            msg = f'Missing required key {key!r} in configuration at {pos!r}.'
+            self.quit_config_error(msg, config_name)
+        return value
 
     def check_user_setup(self, name):
         valid_names = list(self.user_setup.keys())
